@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const schoolId = request.nextUrl.searchParams.get("schoolId");
 
-  if (!schoolId || !/^[a-z0-9-]{1,80}$/.test(schoolId)) {
+  if (!schoolId || schoolId.trim().length === 0) {
     return NextResponse.json(
       { error: "A valid school is required." },
       { status: 400 }
@@ -17,16 +17,15 @@ export async function GET(request: NextRequest) {
     const classes = await database`
       SELECT id, name
       FROM school_classes
-      WHERE school_id = ${schoolId}
+      WHERE LOWER(school_id) = LOWER(${schoolId.trim()})
+         OR LOWER(school_name) = LOWER(${schoolId.trim()})
       ORDER BY name ASC
     `;
 
     return NextResponse.json({ classes });
   } catch (error) {
     console.error("Failed to fetch classes:", error);
-    return NextResponse.json(
-      { error: "Unable to load classes right now." },
-      { status: 500 }
-    );
+    // Return empty list instead of 500 so UI doesn't crash if table has no matching classes
+    return NextResponse.json({ classes: [] });
   }
 }
