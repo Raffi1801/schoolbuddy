@@ -14,18 +14,16 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const result = await database.execute({
-      sql: `
-        SELECT id, name
-        FROM school_classes
-        WHERE school_id = ?
-        ORDER BY name ASC
-      `,
-      args: [schoolId],
-    });
+    const classes = await database`
+      SELECT id, name
+      FROM school_classes
+      WHERE school_id = ${schoolId}
+      ORDER BY name ASC
+    `;
 
-    return NextResponse.json({ classes: result.rows });
-  } catch {
+    return NextResponse.json({ classes });
+  } catch (error) {
+    console.error("Failed to fetch classes:", error);
     return NextResponse.json(
       { error: "Unable to load classes right now." },
       { status: 500 }

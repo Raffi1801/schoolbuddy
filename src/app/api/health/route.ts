@@ -5,16 +5,9 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const result = await database.execute("SELECT 1 AS connected");
-
-    return NextResponse.json({
-      database: "connected",
-      check: result.rows[0]?.connected,
-    });
-  } catch {
-    return NextResponse.json(
-      { database: "not connected" },
-      { status: 500 }
-    );
+    const result = await database`SELECT NOW() as current_time;`;
+    return NextResponse.json({ status: "connected", time: result[0]?.current_time });
+  } catch (error: any) {
+    return NextResponse.json({ status: "failed", error: error.message }, { status: 500 });
   }
 }

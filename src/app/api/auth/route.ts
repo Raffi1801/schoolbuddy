@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import db from "@/database";
+import { database } from "@/database";
 
 export const dynamic = "force-dynamic";
 
@@ -9,117 +9,91 @@ function normalizePhone(rawPhone: string): string {
   return digits.length > 10 ? digits.slice(-10) : digits;
 }
 
-// Check if a user exists / retrieve account profile
-export async function GET(req: NextRequest) {
-  try {
-    const phone = req.nextUrl.searchParams.get("phone");
-    if (!phone) {
-      return NextResponse.json({ error: "Phone number required" }, { status: 400 });
-    }
-
-    const cleanedPhone = normalizePhone(phone);
-    const user: any = db
-      .prepare("SELECT id, name, phone, created_at FROM users WHERE phone = ?")
-      .get(cleanedPhone);
-
-    if (!user) {
-      return NextResponse.json({ exists: false, error: "User not found" }, { status: 404 });
-    }
-
-    return NextResponse.json({ exists: true, user }, { status: 200 });
-  } catch (err: any) {
-    return NextResponse.json({ error: err?.message || "Server error" }, { status: 500 });
-  }
-}
-
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const { action, name, phone, pin } = body;
+    const { action, name, phone, password, role = "user" } = body;
 
     const cleanedPhone = normalizePhone(phone);
 
-    if (!cleanedPhone || !pin) {
-      return NextResponse.json(
-        { error: "Phone number and PIN are required" },
-        { status: 400 }
-      );
-    }
-
-    // 1. SIGNUP / REGISTER
+    // 1. Sign up / Register
     if (action === "register" || action === "signup") {
-      const existingUser = db
-        .prepare("SELECT id FROM users WHERE phone = ?")
-        .get(cleanedPhone);
-
-      if (existingUser) {
+      if (!name || !cleanedPhone || !password) {
         return NextResponse.json(
-          { error: "An account with this mobile number already exists." },
+          { error: "Name, valid phone, and password are required." },
+          { status: 400 }
+        );
+      }
+
+      // Check if user already exists
+      const existing = await database`
+        SELECT id FROM users WHERE phone = ${cleanedPhone} LIMIT 1
+      `;
+      if (existing.length > 0) {
+        return NextResponse.json(
+          { error: "An account with this phone number already exists." },
           { status: 409 }
         );
       }
 
-      const userName = (name || "Customer").trim();
-
-      const insertStmt = db.prepare(`
-        INSERT INTO users (name, phone, pin_hash)
-        VALUES (?, ?, ?)
-      `);
-
-      const result = insertStmt.run(userName, cleanedPhone, String(pin));
-      const createdUser: any = db
-        .prepare("SELECT id, name, phone, created_at FROM users WHERE id = ?")
-        .get(result.lastInsertRowid);
+      // Insert new user
+      const result = await database`
+        INSERT INTO users (name, phone, password, role)
+        VALUES (${name.trim()}, ${cleanedPhone}, ${password}, ${role})
+        RETURNING id, name, phone, role
+      `;
 
       return NextResponse.json(
-        {
-          success: true,
-          user: createdUser,
-        },
+        { success: true, user: result[0] },
         { status: 201 }
       );
     }
 
-    // 2. LOGIN
-    if (action === "login") {
-      const user: any = db
-        .prepare("SELECT * FROM users WHERE phone = ?")
-        .get(cleanedPhone);
-
-      if (!user) {
+    // 2. Sign in / Login
+    if (action === "login" || action === "signin") {
+      if (!cleanedPhone || !password) {
         return NextResponse.json(
-          { error: "Account not found. Please sign up first." },
-          { status: 404 }
+          { error: "Phone number and password are required." },
+          { status: 400 }
         );
       }
 
-      if (String(user.pin_hash) !== String(pin)) {
+      const rows = await database`
+        SELECT id, name, phone, password, role 
+        FROM users 
+        WHERE phone = ${cleanedPhone} 
+        LIMIT 1
+      `;
+      const user = rows[0];
+
+      if (!user || user.password !== password) {
         return NextResponse.json(
-          { error: "Incorrect PIN entered." },
+          { error: "Invalid phone number or password." },
           { status: 401 }
         );
       }
 
+      const { password: _, ...safeUser } = user;
       return NextResponse.json(
-        {
-          success: true,
-          user: {
-            id: user.id,
-            name: user.name,
-            phone: user.phone,
-            created_at: user.created_at,
-          },
-        },
+        { success: true, user: safeUser },
         { status: 200 }
       );
     }
 
-    return NextResponse.json(
-      { error: "Invalid action. Use 'login' or 'signup'." },
-      { status: 400 }
-    );
+    // 3. Admin / direct check
+    if (action === "check_user") {
+      const rows = await database`
+        SELECT id, name, phone, role 
+        FROM users 
+        WHERE phone = ${cleanedPhone} 
+        LIMIT 1
+      `;
+      return NextResponse.json({ user: rows[0] || null }, { status: 200 });
+    }
+
+    return NextResponse.json({ error: "Invalid action." }, { status: 400 });
   } catch (err: any) {
-    console.error("POST /api/auth error:", err);
+    console.error("Auth error:", err);
     return NextResponse.json(
       { error: err?.message || "Internal server error" },
       { status: 500 }

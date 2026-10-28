@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import db from "@/database";
+import { database } from "@/database";
 
 export const dynamic = "force-dynamic";
 
@@ -9,12 +9,12 @@ function normalizePhone(rawPhone: string): string {
   return digits.length > 10 ? digits.slice(-10) : digits;
 }
 
-// Map SQLite row into frontend-compatible shape
+// Map database row into frontend-compatible shape
 function formatOrder(row: any) {
   if (!row) return null;
   let parsedBooks = [];
   try {
-    parsedBooks = JSON.parse(row.books || "[]");
+    parsedBooks = typeof row.books === "string" ? JSON.parse(row.books) : row.books || [];
   } catch {
     parsedBooks = row.books;
   }
@@ -46,8 +46,12 @@ export async function GET(req: NextRequest) {
 
     // 1. Fetch by specific order number
     if (orderNumber) {
-      const stmt = db.prepare("SELECT * FROM orders WHERE order_number = ?");
-      const order = stmt.get(orderNumber);
+      const rows = await database`
+        SELECT * FROM orders 
+        WHERE order_number = ${orderNumber}
+        LIMIT 1
+      `;
+      const order = rows[0];
 
       if (order) {
         return NextResponse.json({ order: formatOrder(order) }, { status: 200 });
@@ -58,21 +62,21 @@ export async function GET(req: NextRequest) {
     // 2. Fetch orders matching a customer's logged-in mobile number
     if (phone) {
       const cleaned = normalizePhone(phone);
-      const stmt = db.prepare(
-        "SELECT * FROM orders WHERE customer_phone = ? OR customer_phone LIKE ? ORDER BY id DESC"
-      );
-      const orders = stmt.all(cleaned, `%${cleaned}`);
+      const rows = await database`
+        SELECT * FROM orders 
+        WHERE customer_phone = ${cleaned} OR customer_phone LIKE ${'%' + cleaned}
+        ORDER BY id DESC
+      `;
       return NextResponse.json(
-        { orders: orders.map(formatOrder) },
+        { orders: rows.map(formatOrder) },
         { status: 200 }
       );
     }
 
-    // 3. Return all orders (e.g. for counter / admin view)
-    const stmt = db.prepare("SELECT * FROM orders ORDER BY id DESC");
-    const allOrders = stmt.all();
+    // 3. Return all orders (counter / admin view)
+    const rows = await database`SELECT * FROM orders ORDER BY id DESC`;
     return NextResponse.json(
-      { orders: allOrders.map(formatOrder) },
+      { orders: rows.map(formatOrder) },
       { status: 200 }
     );
   } catch (err: any) {
@@ -90,44 +94,39 @@ export async function POST(req: NextRequest) {
 
     // Bulk sync from localStorage if needed
     if (action === "sync" && Array.isArray(syncedOrders)) {
-      const insertSyncStmt = db.prepare(`
-        INSERT OR IGNORE INTO orders (
-          order_number, school, class_name, books, cover,
-          delivery, required_date, customer_name, customer_phone,
-          address, total, payment_due, payment_type, status, created_at
-        ) VALUES (
-          @order_number, @school, @class_name, @books, @cover,
-          @delivery, @required_date, @customer_name, @customer_phone,
-          @address, @total, @payment_due, @payment_type, @status, @created_at
-        )
-      `);
+      for (const o of syncedOrders) {
+        const orderNumber = o.order_number;
+        const school = o.school || "Loyola";
+        const className = o.class_name || "General Class";
+        const books = typeof o.books === "string" ? o.books : JSON.stringify(o.books || []);
+        const cover = o.cover || "Normal";
+        const delivery = o.delivery || "Shop drop-off";
+        const requiredDate = o.required_date || "";
+        const customerName = (o.customer_name || "").trim();
+        const customerPhone = normalizePhone(o.customer_phone || o.phone || "");
+        const address = o.address || "Drop at shop";
+        const total = Number(o.total) || 0;
+        const paymentDue = Number(o.payment_due) || 0;
+        const paymentType = o.payment_type || "Pay advance";
+        const status = o.status || "Order Placed";
+        const createdAt = o.created_at || new Date().toISOString();
 
-      const syncTransaction = db.transaction((ordersToSync: any[]) => {
-        for (const o of ordersToSync) {
-          insertSyncStmt.run({
-            order_number: o.order_number,
-            school: o.school || "Loyola",
-            class_name: o.class_name || "General Class",
-            books: typeof o.books === "string" ? o.books : JSON.stringify(o.books || []),
-            cover: o.cover || "Normal",
-            delivery: o.delivery || "Shop drop-off",
-            required_date: o.required_date || "",
-            customer_name: (o.customer_name || "").trim(),
-            customer_phone: normalizePhone(o.customer_phone || o.phone || ""),
-            address: o.address || "Drop at shop",
-            total: Number(o.total) || 0,
-            payment_due: Number(o.payment_due) || 0,
-            payment_type: o.payment_type || "Pay advance",
-            status: o.status || "Order Placed",
-            created_at: o.created_at || new Date().toISOString(),
-          });
-        }
-      });
+        await database`
+          INSERT INTO orders (
+            order_number, school, class_name, books, cover,
+            delivery, required_date, customer_name, customer_phone,
+            address, total, payment_due, payment_type, status, created_at
+          ) VALUES (
+            ${orderNumber}, ${school}, ${className}, ${books}, ${cover},
+            ${delivery}, ${requiredDate}, ${customerName}, ${customerPhone},
+            ${address}, ${total}, ${paymentDue}, ${paymentType}, ${status}, ${createdAt}
+          )
+          ON CONFLICT (order_number) DO NOTHING
+        `;
+      }
 
-      syncTransaction(syncedOrders);
-
-      const count = db.prepare("SELECT COUNT(*) AS count FROM orders").get() as { count: number };
-      return NextResponse.json({ success: true, count: count.count }, { status: 200 });
+      const countResult = await database`SELECT COUNT(*)::int AS count FROM orders`;
+      return NextResponse.json({ success: true, count: countResult[0]?.count ?? 0 }, { status: 200 });
     }
 
     const {
@@ -157,44 +156,36 @@ export async function POST(req: NextRequest) {
     const orderNumber = `SB-${Math.floor(100000 + Math.random() * 900000)}`;
     const booksString = typeof selectedBooks === "string" ? selectedBooks : JSON.stringify(selectedBooks);
     const createdAt = new Date().toISOString();
+    const finalSchool = school || "Loyola";
+    const finalClassName = className || "General Class";
+    const finalCover = cover || "Normal";
+    const finalDelivery = delivery || "Shop drop-off";
+    const finalRequiredDate = requiredDate || "";
+    const finalCustomerName = customerName.trim();
+    const finalAddress = address || "Drop at shop";
+    const finalTotal = Number(total) || 0;
+    const finalPaymentDue = Number(paymentDue) || 0;
+    const finalPaymentType = paymentType || "Pay advance";
+    const finalStatus = "Order Placed";
 
-    const insertStmt = db.prepare(`
+    const rows = await database`
       INSERT INTO orders (
         order_number, school, class_name, books, cover,
         delivery, required_date, customer_name, customer_phone,
         address, total, payment_due, payment_type, status, created_at
       ) VALUES (
-        @order_number, @school, @class_name, @books, @cover,
-        @delivery, @required_date, @customer_name, @customer_phone,
-        @address, @total, @payment_due, @payment_type, @status, @created_at
+        ${orderNumber}, ${finalSchool}, ${finalClassName}, ${booksString}, ${finalCover},
+        ${finalDelivery}, ${finalRequiredDate}, ${finalCustomerName}, ${cleanedPhone},
+        ${finalAddress}, ${finalTotal}, ${finalPaymentDue}, ${finalPaymentType}, ${finalStatus}, ${createdAt}
       )
-    `);
-
-    const newOrderData = {
-      order_number: orderNumber,
-      school: school || "Loyola",
-      class_name: className || "General Class",
-      books: booksString,
-      cover: cover || "Normal",
-      delivery: delivery || "Shop drop-off",
-      required_date: requiredDate || "",
-      customer_name: customerName.trim(),
-      customer_phone: cleanedPhone,
-      address: address || "Drop at shop",
-      total: Number(total) || 0,
-      payment_due: Number(paymentDue) || 0,
-      payment_type: paymentType || "Pay advance",
-      status: "Order Placed",
-      created_at: createdAt,
-    };
-
-    const result = insertStmt.run(newOrderData);
+      RETURNING *
+    `;
 
     return NextResponse.json(
       {
         success: true,
         orderNumber,
-        order: { id: result.lastInsertRowid, ...newOrderData, books: selectedBooks },
+        order: formatOrder(rows[0]),
       },
       { status: 200 }
     );
@@ -220,35 +211,37 @@ export async function PATCH(req: NextRequest) {
 
     // Action to clear remaining balance and mark as settled
     if (action === "pay_due") {
-      const updateStmt = db.prepare(`
+      const rows = await database`
         UPDATE orders 
         SET payment_due = 0,
             payment_type = 'Full Payment Settled (Paid)',
             status = CASE WHEN status = 'Order Placed' THEN 'In Progress' ELSE status END
-        WHERE order_number = ?
-      `);
-      updateStmt.run(orderNumber);
-
-      const updated = db.prepare("SELECT * FROM orders WHERE order_number = ?").get(orderNumber);
-      return NextResponse.json({ success: true, order: formatOrder(updated) }, { status: 200 });
+        WHERE order_number = ${orderNumber}
+        RETURNING *
+      `;
+      return NextResponse.json({ success: true, order: formatOrder(rows[0]) }, { status: 200 });
     }
 
     // Status transitions
     if (status) {
       if (status === "Completed") {
-        db.prepare(`
+        await database`
           UPDATE orders 
-          SET status = ?, payment_due = 0, payment_type = 'Full Payment Settled (Paid)' 
-          WHERE order_number = ?
-        `).run(status, orderNumber);
+          SET status = ${status}, payment_due = 0, payment_type = 'Full Payment Settled (Paid)' 
+          WHERE order_number = ${orderNumber}
+        `;
       } else if (status === "Cancelled") {
-        db.prepare(`
+        await database`
           UPDATE orders 
-          SET status = ?, payment_due = 0, payment_type = 'Order Cancelled - Payment Not Required' 
-          WHERE order_number = ?
-        `).run(status, orderNumber);
+          SET status = ${status}, payment_due = 0, payment_type = 'Order Cancelled - Payment Not Required' 
+          WHERE order_number = ${orderNumber}
+        `;
       } else {
-        db.prepare("UPDATE orders SET status = ? WHERE order_number = ?").run(status, orderNumber);
+        await database`
+          UPDATE orders 
+          SET status = ${status} 
+          WHERE order_number = ${orderNumber}
+        `;
       }
 
       return NextResponse.json({ success: true }, { status: 200 });
