@@ -153,7 +153,29 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const orderNumber = `SB-${Math.floor(100000 + Math.random() * 900000)}`;
+    // Format current date and month (DDMM) using Indian Standard Time
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat("en-IN", {
+      timeZone: "Asia/Kolkata",
+      day: "2-digit",
+      month: "2-digit",
+    });
+    const parts = formatter.formatToParts(now);
+    const day = parts.find((p) => p.type === "day")?.value || "01";
+    const month = parts.find((p) => p.type === "month")?.value || "01";
+    const datePrefix = `${day}${month}`; // e.g. "3010" for 30th October
+
+    // Count today's orders with this date prefix to determine sequence
+    const countToday = await database`
+      SELECT COUNT(*)::int AS count 
+      FROM orders 
+      WHERE order_number LIKE ${`SB${datePrefix}%`}
+    `;
+    const sequenceNumber = (countToday[0]?.count ?? 0) + 1;
+
+    // Generates: SB3010001, SB3010002, etc. (no hyphens)
+    const orderNumber = `SB${datePrefix}${String(sequenceNumber).padStart(3, "0")}`;
+
     const booksString = typeof selectedBooks === "string" ? selectedBooks : JSON.stringify(selectedBooks);
     const createdAt = new Date().toISOString();
     const finalSchool = school || "Loyola";
