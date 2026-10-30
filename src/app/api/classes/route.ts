@@ -3,28 +3,50 @@ import { database } from "@/database";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: NextRequest) {
-  const schoolId = request.nextUrl.searchParams.get("schoolId");
+const DEFAULT_CLASSES = [
+  { id: "class-1", name: "Class 1" },
+  { id: "class-2", name: "Class 2" },
+  { id: "class-3", name: "Class 3" },
+  { id: "class-4", name: "Class 4" },
+  { id: "class-5", name: "Class 5" },
+  { id: "class-6", name: "Class 6" },
+  { id: "class-7", name: "Class 7" },
+  { id: "class-8", name: "Class 8" },
+  { id: "class-9", name: "Class 9" },
+  { id: "class-10", name: "Class 10" },
+];
 
-  if (!schoolId || schoolId.trim().length === 0) {
-    return NextResponse.json(
-      { error: "A valid school is required." },
-      { status: 400 }
-    );
+export async function GET(req: NextRequest) {
+  const schoolParam =
+    req.nextUrl.searchParams.get("schoolId") ||
+    req.nextUrl.searchParams.get("school") ||
+    "";
+
+  if (!schoolParam.trim()) {
+    return NextResponse.json({ classes: DEFAULT_CLASSES });
   }
 
   try {
-    const rows = await database`
-  SELECT DISTINCT id, name 
-  FROM school_classes 
-  WHERE school_id = ${schoolId} OR school_name ILIKE ${'%' + schoolId + '%'}
-  ORDER BY NULLIF(regexp_replace(name, '\D', '', 'g'), '')::int ASC, name ASC
-`;
+    const cleanParam = decodeURIComponent(schoolParam).trim();
+    const searchPattern = `%${cleanParam}%`;
 
-    return NextResponse.json({ classes: rows }, { status: 200 });
+    const rows = await database`
+      SELECT name, MIN(id) AS id
+      FROM school_classes
+      WHERE school_id = ${cleanParam} 
+         OR school_name ILIKE ${searchPattern}
+      GROUP BY name
+      ORDER BY NULLIF(regexp_replace(name, '\D', '', 'g'), '')::int ASC NULLS LAST, name ASC
+    `;
+
+    if (rows && rows.length > 0) {
+      return NextResponse.json({ classes: rows });
+    }
+
+    // Default for any school without custom database rows
+    return NextResponse.json({ classes: DEFAULT_CLASSES });
   } catch (error) {
-    console.error("Failed to fetch classes:", error);
-    // Return empty list instead of 500 so UI doesn't crash if table has no matching classes
-    return NextResponse.json({ classes: [] });
+    console.error("Classes API error:", error);
+    return NextResponse.json({ classes: DEFAULT_CLASSES });
   }
 }

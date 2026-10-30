@@ -11,44 +11,51 @@ type SchoolClass = {
   name: string;
 };
 
+const DEFAULT_CLASSES: SchoolClass[] = [
+  { id: "class-1", name: "Class 1" },
+  { id: "class-2", name: "Class 2" },
+  { id: "class-3", name: "Class 3" },
+  { id: "class-4", name: "Class 4" },
+  { id: "class-5", name: "Class 5" },
+  { id: "class-6", name: "Class 6" },
+  { id: "class-7", name: "Class 7" },
+  { id: "class-8", name: "Class 8" },
+  { id: "class-9", name: "Class 9" },
+  { id: "class-10", name: "Class 10" },
+];
+
 function ClassesContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const schoolId = searchParams.get("school") || "";
-  const [classes, setClasses] = useState<SchoolClass[]>([]);
+  const [classes, setClasses] = useState<SchoolClass[]>(DEFAULT_CLASSES);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadClasses() {
       if (!schoolId) {
+        setClasses(DEFAULT_CLASSES);
         setLoading(false);
         return;
       }
+
       try {
         const res = await fetch(`/api/classes?schoolId=${encodeURIComponent(schoolId)}`);
         const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.error || "Failed to load classes");
+
+        if (res.ok && Array.isArray(data.classes) && data.classes.length > 0) {
+          setClasses(data.classes);
+        } else {
+          setClasses(DEFAULT_CLASSES);
         }
-        setClasses(data.classes || []);
-      } catch {
-        // Fallback default classes
-        setClasses([
-          { id: "class-1", name: "Class 1" },
-          { id: "class-2", name: "Class 2" },
-          { id: "class-3", name: "Class 3" },
-          { id: "class-4", name: "Class 4" },
-          { id: "class-5", name: "Class 5" },
-          { id: "class-6", name: "Class 6" },
-          { id: "class-7", name: "Class 7" },
-          { id: "class-8", name: "Class 8" },
-          { id: "class-9", name: "Class 9" },
-          { id: "class-10", name: "Class 10" },
-        ]);
+      } catch (err) {
+        console.error("Failed to load classes from API, using defaults:", err);
+        setClasses(DEFAULT_CLASSES);
       } finally {
         setLoading(false);
       }
     }
+
     loadClasses();
   }, [schoolId]);
 
