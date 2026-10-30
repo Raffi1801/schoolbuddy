@@ -12,34 +12,50 @@ function normalizePhone(rawPhone: string): string {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const { action, name, phone, password, role = "user" } = body;
+    const { action, name, phone, pin, password, role = "user" } = body;
 
     const cleanedPhone = normalizePhone(phone);
+    const userSecret = pin || password;
 
-    // 1. Sign up / Register
-    if (action === "register" || action === "signup") {
-      if (!name || !cleanedPhone || !password) {
+    // 1. Send OTP (Demo code 1234)
+    if (action === "send_otp") {
+      if (!cleanedPhone || cleanedPhone.length !== 10) {
         return NextResponse.json(
-          { error: "Name, valid phone, and password are required." },
+          { error: "A valid 10-digit mobile number is required." },
           { status: 400 }
         );
       }
 
-      // Check if user already exists
+      // Return a demo OTP for local/cloud testing
+      const demoOtp = "1234";
+      return NextResponse.json(
+        { success: true, message: "OTP sent successfully", debugOtp: demoOtp },
+        { status: 200 }
+      );
+    }
+
+    // 2. Sign Up / Register
+    if (action === "signup" || action === "register") {
+      if (!name || !cleanedPhone || !userSecret) {
+        return NextResponse.json(
+          { error: "Name, phone, and 4-digit PIN are required." },
+          { status: 400 }
+        );
+      }
+
       const existing = await database`
         SELECT id FROM users WHERE phone = ${cleanedPhone} LIMIT 1
       `;
       if (existing.length > 0) {
         return NextResponse.json(
-          { error: "An account with this phone number already exists." },
+          { error: "User already exists with this mobile number. Please sign in." },
           { status: 409 }
         );
       }
 
-      // Insert new user
       const result = await database`
         INSERT INTO users (name, phone, password, role)
-        VALUES (${name.trim()}, ${cleanedPhone}, ${password}, ${role})
+        VALUES (${name.trim()}, ${cleanedPhone}, ${userSecret}, ${role})
         RETURNING id, name, phone, role
       `;
 
@@ -49,11 +65,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Sign in / Login
+    // 3. Login / Sign In
     if (action === "login" || action === "signin") {
-      if (!cleanedPhone || !password) {
+      if (!cleanedPhone || !userSecret) {
         return NextResponse.json(
-          { error: "Phone number and password are required." },
+          { error: "Phone number and PIN are required." },
           { status: 400 }
         );
       }
@@ -66,9 +82,9 @@ export async function POST(req: NextRequest) {
       `;
       const user = rows[0];
 
-      if (!user || user.password !== password) {
+      if (!user || user.password !== userSecret) {
         return NextResponse.json(
-          { error: "Invalid phone number or password." },
+          { error: "Invalid phone number or PIN." },
           { status: 401 }
         );
       }
@@ -80,7 +96,36 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Admin / direct check
+    // 4. Reset PIN
+    if (action === "reset_pin") {
+      if (!cleanedPhone || !userSecret) {
+        return NextResponse.json(
+          { error: "Phone number and new PIN are required." },
+          { status: 400 }
+        );
+      }
+
+      const updated = await database`
+        UPDATE users 
+        SET password = ${userSecret}
+        WHERE phone = ${cleanedPhone}
+        RETURNING id, name, phone, role
+      `;
+
+      if (updated.length === 0) {
+        return NextResponse.json(
+          { error: "No account found with this phone number." },
+          { status: 404 }
+        );
+      }
+
+      return NextResponse.json(
+        { success: true, user: updated[0] },
+        { status: 200 }
+      );
+    }
+
+    // 5. User verification check
     if (action === "check_user") {
       const rows = await database`
         SELECT id, name, phone, role 

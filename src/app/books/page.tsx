@@ -177,7 +177,6 @@ function BooksContent() {
       })
       .catch(() => {});
 
-    // Fetch existing orders to check date availability
     fetch("/api/orders")
       .then((r) => r.json())
       .then((data) => {
@@ -231,14 +230,12 @@ function BooksContent() {
     return payment === "Pay advance" ? Math.ceil(total * 0.3) : total;
   }, [payment, total]);
 
-  // Capacity Checker for Date
   function getOrdersCountForDate(targetDate: string): number {
     return existingOrders.filter(
       (o) => o.required_date === targetDate && o.status !== "Cancelled"
     ).length;
   }
 
-  // Returns the custom limit for the given date, or defaultDailyLimit if not set
   function getLimitForDate(targetDate: string): number {
     if (dateLimits && targetDate in dateLimits) {
       return Number(dateLimits[targetDate]);
@@ -393,7 +390,8 @@ function BooksContent() {
       return;
     }
 
-    if (!/^\d{10}$/.test(customerPhone)) {
+    const cleanPhone = customerPhone.replace(/\D/g, "").slice(-10);
+    if (cleanPhone.length !== 10) {
       triggerError("Please enter a valid 10-digit mobile number.");
       return;
     }
@@ -440,8 +438,8 @@ function BooksContent() {
           cover: coverSummary,
           delivery,
           requiredDate,
-          customerName,
-          customerPhone: `+91${customerPhone}`,
+          customerName: customerName.trim(),
+          customerPhone: cleanPhone,
           address:
             delivery === "Home pickup and return"
               ? `${address} (Distance: ${distanceLabel} · Fee: ₹${deliveryCharge})`
@@ -452,16 +450,10 @@ function BooksContent() {
         }),
       });
 
-      const text = await res.text();
-      let data: any = {};
-      try {
-        data = text ? JSON.parse(text) : {};
-      } catch {
-        throw new Error(`Server returned unexpected response: ${text || res.statusText}`);
-      }
+      const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        throw new Error(data.error || "Failed to place order.");
+        throw new Error(data.error || `Server responded with status ${res.status}`);
       }
 
       try {
@@ -483,7 +475,11 @@ function BooksContent() {
         router.replace(`/tracking?orderNumber=${data.orderNumber}`);
       }, 1200);
     } catch (err: any) {
+      console.error("Order submission failed:", err);
       triggerError(err.message || "An unexpected error occurred while placing your order.");
+    } finally {
+      isSubmittingRef.current = false;
+      setSubmitting(false);
     }
   }
 
@@ -547,7 +543,7 @@ function BooksContent() {
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between border-b border-slate-100 pb-4">
                 <div>
-                  <h2 className="text-xl font-bold text-slate-900">1. Select Books & Protective Covers</h2>
+                  <h2 className="text-xl font-bold text-slate-900">Select Books & Protective Covers</h2>
                   <p className="text-xs text-slate-500 mt-0.5">
                     Curriculum subjects for {school}.
                   </p>
@@ -762,7 +758,7 @@ function BooksContent() {
               )}
             </section>
 
-            {/* 3. Schedule & Contact (Enforcing Per-Date Limit) */}
+            {/* 3. Schedule & Contact */}
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <h2 className="text-xl font-bold text-slate-900 border-b border-slate-100 pb-4">
                 3. Schedule & Contact
@@ -780,11 +776,11 @@ function BooksContent() {
                     className="mt-1 w-full rounded-xl border border-slate-300 bg-white p-3 text-sm focus:border-indigo-600 focus:outline-none"
                     required
                   />
-               {requiredDate && (
-    <p className="mt-1 text-[11px] font-semibold text-emerald-700">
-      ✓ Date Available
-    </p>
-  )}
+                  {requiredDate && (
+                    <p className="mt-1 text-[11px] font-semibold text-emerald-700">
+                      ✓ Date Available
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -963,10 +959,10 @@ function BooksContent() {
                   </p>
                 )}
                 {requiredDate && (
-    <p className="mt-1 text-slate-400">
-      Target Date: {requiredDate}
-    </p>
-  )}
+                  <p className="mt-1 text-slate-400">
+                    Target Date: {requiredDate}
+                  </p>
+                )}
               </div>
             </div>
 
