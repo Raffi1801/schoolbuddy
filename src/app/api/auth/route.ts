@@ -54,8 +54,8 @@ export async function POST(req: NextRequest) {
       }
 
       const result = await database`
-        INSERT INTO users (name, phone, password, role)
-        VALUES (${name.trim()}, ${cleanedPhone}, ${userSecret}, ${role})
+        INSERT INTO users (name, phone, password, pin_hash, role)
+        VALUES (${name.trim()}, ${cleanedPhone}, ${userSecret}, ${userSecret}, ${role})
         RETURNING id, name, phone, role
       `;
 
@@ -75,21 +75,22 @@ export async function POST(req: NextRequest) {
       }
 
       const rows = await database`
-        SELECT id, name, phone, password, role 
+        SELECT id, name, phone, password, pin_hash, role 
         FROM users 
         WHERE phone = ${cleanedPhone} 
         LIMIT 1
       `;
       const user = rows[0];
 
-      if (!user || user.password !== userSecret) {
+      const savedSecret = user?.password || user?.pin_hash;
+      if (!user || savedSecret !== userSecret) {
         return NextResponse.json(
           { error: "Invalid phone number or PIN." },
           { status: 401 }
         );
       }
 
-      const { password: _, ...safeUser } = user;
+      const { password: _, pin_hash: __, ...safeUser } = user;
       return NextResponse.json(
         { success: true, user: safeUser },
         { status: 200 }

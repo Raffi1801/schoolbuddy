@@ -14,15 +14,14 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const classes = await database`
-      SELECT id, name
-      FROM school_classes
-      WHERE LOWER(school_id) = LOWER(${schoolId.trim()})
-         OR LOWER(school_name) = LOWER(${schoolId.trim()})
-      ORDER BY name ASC
-    `;
+    const rows = await database`
+  SELECT DISTINCT id, name 
+  FROM school_classes 
+  WHERE school_id = ${schoolId} OR school_name ILIKE ${'%' + schoolId + '%'}
+  ORDER BY NULLIF(regexp_replace(name, '\D', '', 'g'), '')::int ASC, name ASC
+`;
 
-    return NextResponse.json({ classes });
+    return NextResponse.json({ classes: rows }, { status: 200 });
   } catch (error) {
     console.error("Failed to fetch classes:", error);
     // Return empty list instead of 500 so UI doesn't crash if table has no matching classes
