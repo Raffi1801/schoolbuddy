@@ -2,18 +2,7 @@
 
 import { useMemo, useState, useEffect, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-
-const fallbackBooks = [
-  "Telugu Books",
-  "Hindi Books",
-  "English Books",
-  "Mathematics Books",
-  "Science Books",
-  "SocialStudies Books",
-  "Biology Books",
-  "Other Books",
-  "NoteBooks (CW, HW, and others)",
-];
+import Link from "next/link";
 
 const SHOP_LATITUDE = 17.3556;
 const SHOP_LONGITUDE = 82.5487;
@@ -55,14 +44,15 @@ type BookItemState = {
 function BooksContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const school = searchParams.get("school") ?? "Selected School";
+  const school = searchParams.get("school") ?? "";
   const className = searchParams.get("class") ?? "General Standard";
 
   const minAllowedDate = useMemo(() => getMinAllowedDate(), []);
   const isSubmittingRef = useRef(false);
 
   // Dynamic state
-  const [subjectsList, setSubjectsList] = useState<string[]>(fallbackBooks);
+  const [subjectsList, setSubjectsList] = useState<string[]>([]);
+  const [loadingBooks, setLoadingBooks] = useState(true);
   const [coverPrices, setCoverPrices] = useState<Record<string, number>>({
     Normal: 25,
     Premium: 40,
@@ -90,68 +80,45 @@ function BooksContent() {
   const [orderConfirmedNumber, setOrderConfirmedNumber] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
 
-  // 1. Fetch School-Specific Subjects
+  // 1. Fetch School-Specific Subjects from Database API
   useEffect(() => {
-    async function loadSchoolSubjects() {
+    async function loadSchoolBooks() {
+      if (!school) {
+        setSubjectsList([]);
+        setLoadingBooks(false);
+        return;
+      }
+
+      setLoadingBooks(true);
       try {
-        const res = await fetch("/api/schools");
+        const res = await fetch(`/api/books?school=${encodeURIComponent(school)}`);
         const data = await res.json();
-        const found = (data.schools || []).find(
-          (s: any) => s.name?.toLowerCase() === school.toLowerCase()
-        );
 
-        let list = fallbackBooks;
-        if (found && Array.isArray(found.subjects) && found.subjects.length > 0) {
-          list = found.subjects;
+        if (res.ok && Array.isArray(data.books)) {
+          const list = data.books.map((b: { id: string; name: string }) => b.name);
+          setSubjectsList(list);
+
+          const init: Record<string, BookItemState> = {};
+          list.forEach((b: string) => {
+            init[b] = { count: 0, cover: "Normal" };
+          });
+          setBookItems(init);
         } else {
-          const cached = localStorage.getItem("sb_custom_schools");
-          if (cached) {
-            const parsed = JSON.parse(cached);
-            const foundLocal = parsed.find((s: any) => s.name?.toLowerCase() === school.toLowerCase());
-            if (foundLocal?.subjects?.length > 0) list = foundLocal.subjects;
-          }
+          setSubjectsList([]);
         }
-
-        setSubjectsList(list);
-        const init: Record<string, BookItemState> = {};
-        list.forEach((b: string) => {
-          init[b] = { count: 0, cover: "Normal" };
-        });
-        setBookItems(init);
-      } catch {
-        const init: Record<string, BookItemState> = {};
-        fallbackBooks.forEach((b) => {
-          init[b] = { count: 0, cover: "Normal" };
-        });
-        setBookItems(init);
+      } catch (err) {
+        console.error("Failed to fetch books from database:", err);
+        setSubjectsList([]);
+      } finally {
+        setLoadingBooks(false);
       }
     }
-    loadSchoolSubjects();
+
+    loadSchoolBooks();
   }, [school]);
 
   // 2. Fetch Pricing & Per-Date Orders Limit
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem("sb_shop_settings");
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed.prices) {
-          setCoverPrices({
-            Normal: Number(parsed.prices.Normal) || 25,
-            Premium: Number(parsed.prices.Premium) || 40,
-            Special: Number(parsed.prices.Special) || 60,
-          });
-          if (parsed.prices.ratePerKm) setRatePerKm(Number(parsed.prices.ratePerKm));
-        }
-        if (parsed.defaultDailyLimit) setDefaultDailyLimit(Number(parsed.defaultDailyLimit));
-        else if (parsed.maxOrdersPerDay) setDefaultDailyLimit(Number(parsed.maxOrdersPerDay));
-
-        if (parsed.dateLimits && typeof parsed.dateLimits === "object") {
-          setDateLimits(parsed.dateLimits);
-        }
-      }
-    } catch {}
-
     fetch("/api/settings")
       .then((r) => r.json())
       .then((data) => {
@@ -162,33 +129,26 @@ function BooksContent() {
               Premium: Number(data.settings.prices.Premium) || 40,
               Special: Number(data.settings.prices.Special) || 60,
             });
-            if (data.settings.prices.ratePerKm) setRatePerKm(Number(data.settings.prices.ratePerKm));
+            if (data.settings.prices.ratePerKm) {
+              setRatePerKm(Number(data.settings.prices.ratePerKm));
+            }
           }
           if (data.settings.defaultDailyLimit) {
             setDefaultDailyLimit(Number(data.settings.defaultDailyLimit));
-          } else if (data.settings.maxOrdersPerDay) {
-            setDefaultDailyLimit(Number(data.settings.maxOrdersPerDay));
           }
-
           if (data.settings.dateLimits && typeof data.settings.dateLimits === "object") {
             setDateLimits(data.settings.dateLimits);
           }
         }
       })
-      .catch(() => {});
+      .catch((err) => console.error("Error loading settings:", err));
 
     fetch("/api/orders")
       .then((r) => r.json())
       .then((data) => {
-        const list = data.orders || [];
-        setExistingOrders(list);
+        setExistingOrders(data.orders || []);
       })
-      .catch(() => {
-        try {
-          const stored = localStorage.getItem("sb_all_orders_backup");
-          if (stored) setExistingOrders(JSON.parse(stored));
-        } catch {}
-      });
+      .catch((err) => console.error("Error loading orders:", err));
   }, []);
 
   // Pre-fill user data if logged in
@@ -456,19 +416,6 @@ function BooksContent() {
         throw new Error(data.error || `Server responded with status ${res.status}`);
       }
 
-      try {
-        const existing = JSON.parse(localStorage.getItem("sb_recent_orders") || "[]");
-        localStorage.setItem("sb_recent_orders", JSON.stringify([data.orderNumber, ...existing]));
-      } catch {}
-
-      if (data.order) {
-        try {
-          const allBackup = JSON.parse(localStorage.getItem("sb_all_orders_backup") || "[]");
-          const filtered = allBackup.filter((o: any) => o.order_number !== data.order.order_number);
-          localStorage.setItem("sb_all_orders_backup", JSON.stringify([data.order, ...filtered]));
-        } catch {}
-      }
-
       setOrderConfirmedNumber(data.orderNumber);
 
       setTimeout(() => {
@@ -508,27 +455,28 @@ function BooksContent() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-900 pb-16">
+    <main className="min-h-screen bg-slate-50 text-slate-900 pb-20">
+      {/* Header */}
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <a href="/" className="flex items-center gap-2 text-2xl font-black tracking-tight text-slate-900">
+          <Link href="/" className="flex items-center gap-2 text-2xl font-black text-slate-900">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-sm text-white">📚</span>
-            School<span className="text-indigo-600">Buddy</span>
-          </a>
-          <a
-            href="/schools"
-            className="text-sm font-semibold text-slate-600 hover:text-indigo-700"
+            School <span className="text-indigo-600">Buddy</span>
+          </Link>
+          <Link
+            href={`/classes?school=${encodeURIComponent(school)}`}
+            className="text-xs font-semibold text-slate-500 hover:text-indigo-600"
           >
-            ← Change School
-          </a>
+            ← Change Class
+          </Link>
         </div>
       </header>
 
       <section className="mx-auto max-w-6xl px-6 pt-10">
         <p className="font-semibold text-xs tracking-wider uppercase text-indigo-700">Step 3 of 3</p>
         <h1 className="mt-1 text-3xl font-extrabold text-slate-900">Configure Books & Covers</h1>
-        <p className="mt-2 text-sm text-slate-600">
-          <span className="font-bold text-slate-900">{school}</span> · {className}
+        <p className="mt-1 text-sm text-slate-600">
+          <span className="font-bold text-slate-900">{school || "School Not Selected"}</span> · {className}
         </p>
 
         {errorMessage && (
@@ -539,11 +487,11 @@ function BooksContent() {
 
         <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_380px]">
           <form onSubmit={handlePlaceOrder} autoComplete="off" className="space-y-8">
-            {/* 1. Books List with Custom Syllabus Subjects */}
-            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            {/* 1. Books List Matching UI Design */}
+            <section className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-8 shadow-xs">
               <div className="flex items-center justify-between border-b border-slate-100 pb-4">
                 <div>
-                  <h2 className="text-xl font-bold text-slate-900">Select Books & Protective Covers</h2>
+                  <h2 className="text-xl font-bold text-slate-900">1. Select Books & Protective Covers</h2>
                   <p className="text-xs text-slate-500 mt-0.5">
                     Curriculum subjects for {school}.
                   </p>
@@ -553,95 +501,101 @@ function BooksContent() {
                 </span>
               </div>
 
-              <div className="mt-5 space-y-3">
-                {subjectsList.map((book) => {
-                  const item = bookItems[book] || { count: 0, cover: "Normal" };
-                  const isSelected = item.count > 0;
-                  const currentPrice = coverPrices[item.cover] ?? 25;
+              <div className="mt-6 space-y-3">
+                {loadingBooks ? (
+                  <p className="py-8 text-center text-xs font-semibold text-slate-400">
+                    Loading curriculum books...
+                  </p>
+                ) : subjectsList.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-200 p-8 text-center text-xs text-slate-400">
+                    No books configured for this school yet. Please add subjects in the Admin Panel.
+                  </div>
+                ) : (
+                  subjectsList.map((book) => {
+                    const item = bookItems[book] || { count: 0, cover: "Normal" };
+                    const isSelected = item.count > 0;
+                    const currentPrice = coverPrices[item.cover] ?? 25;
 
-                  return (
-                    <div
-                      key={book}
-                      className={`rounded-xl border p-4 transition-all ${
-                        isSelected
-                          ? "border-emerald-300 bg-emerald-50/40 shadow-xs"
-                          : "border-slate-200 bg-slate-50/50 opacity-80"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-4">
-                        <label className="flex flex-1 cursor-pointer items-center gap-3">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => toggleBookCheckbox(book)}
-                            className="h-5 w-5 accent-indigo-700 cursor-pointer rounded"
-                          />
-                          <div>
-                            <p className="font-semibold text-slate-900 text-sm">{book}</p>
-                            <span className="text-xs text-slate-500">
-                              {isSelected
-                                ? `₹${currentPrice} each · Subtotal: ₹${item.count * currentPrice}`
-                                : "Standard syllabus book"}
-                            </span>
-                          </div>
-                        </label>
+                    return (
+                      <div
+                        key={book}
+                        className={`rounded-2xl border p-4 sm:p-5 transition-all shadow-xs ${
+                          isSelected
+                            ? "border-indigo-300 bg-indigo-50/20"
+                            : "border-slate-200 bg-white hover:border-slate-300"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-4">
+                          <label className="flex flex-1 cursor-pointer items-center gap-3.5">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleBookCheckbox(book)}
+                              className="h-5 w-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                            />
+                            <div>
+                              <p className="font-bold text-slate-900 text-sm">{book}</p>
+                              <span className="text-xs text-slate-400">Standard syllabus book</span>
+                            </div>
+                          </label>
 
-                        <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1 shadow-xs">
-                          <button
-                            type="button"
-                            onClick={() => decrementBook(book)}
-                            disabled={item.count === 0}
-                            className="flex h-7 w-7 items-center justify-center rounded-md bg-slate-100 font-bold text-slate-700 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-30 transition"
-                          >
-                            −
-                          </button>
-                          <span className="w-5 text-center font-mono font-bold text-slate-800 text-sm">
-                            {item.count}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => incrementBook(book)}
-                            className="flex h-7 w-7 items-center justify-center rounded-md bg-slate-100 font-bold text-slate-700 hover:bg-slate-200 transition"
-                          >
-                            +
-                          </button>
-                        </div>
-                      </div>
-
-                      {isSelected && (
-                        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-emerald-200/60 pt-3">
-                          <span className="text-xs font-semibold text-slate-600">Cover Grade:</span>
-                          {(["Normal", "Premium", "Special"] as const).map((cType) => (
+                          <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/70 px-2.5 py-1">
                             <button
-                              key={cType}
                               type="button"
-                              onClick={() => handleCoverChange(book, cType)}
-                              className={`rounded-lg px-2.5 py-1 text-xs font-bold transition-all ${
-                                item.cover === cType
-                                  ? "bg-indigo-600 text-white shadow-xs ring-2 ring-indigo-300"
-                                  : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
-                              }`}
+                              onClick={() => decrementBook(book)}
+                              disabled={item.count === 0}
+                              className="flex h-7 w-7 items-center justify-center rounded-lg bg-white font-bold text-slate-600 shadow-2xs hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition"
                             >
-                              {cType} (₹{coverPrices[cType] ?? 25})
+                              −
                             </button>
-                          ))}
+                            <span className="w-5 text-center font-mono font-bold text-slate-800 text-sm">
+                              {item.count}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => incrementBook(book)}
+                              className="flex h-7 w-7 items-center justify-center rounded-lg bg-white font-bold text-slate-600 shadow-2xs hover:bg-slate-100 transition"
+                            >
+                              +
+                            </button>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  );
-                })}
+
+                        {isSelected && (
+                          <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                            <span className="text-xs font-semibold text-slate-500">Cover Grade:</span>
+                            {(["Normal", "Premium", "Special"] as const).map((cType) => (
+                              <button
+                                key={cType}
+                                type="button"
+                                onClick={() => handleCoverChange(book, cType)}
+                                className={`rounded-lg px-2.5 py-1 text-xs font-bold transition-all cursor-pointer ${
+                                  item.cover === cType
+                                    ? "bg-indigo-600 text-white shadow-xs"
+                                    : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                }`}
+                              >
+                                {cType} (₹{coverPrices[cType] ?? 25})
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </section>
 
             {/* 2. Service & Delivery */}
-            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <section className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-8 shadow-xs">
               <h2 className="text-xl font-bold text-slate-900 border-b border-slate-100 pb-4">
                 2. Service & Delivery Mode
               </h2>
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
                 <div
                   onClick={() => setDelivery("Shop drop-off")}
-                  className={`relative cursor-pointer rounded-xl border p-4 transition-all ${
+                  className={`relative cursor-pointer rounded-2xl border p-4 sm:p-5 transition-all ${
                     delivery === "Shop drop-off"
                       ? "border-indigo-600 bg-indigo-50/40 ring-2 ring-indigo-200"
                       : "border-slate-200 bg-white hover:border-slate-300"
@@ -676,7 +630,7 @@ function BooksContent() {
 
                 <div
                   onClick={() => setDelivery("Home pickup and return")}
-                  className={`cursor-pointer rounded-xl border p-4 transition-all ${
+                  className={`cursor-pointer rounded-2xl border p-4 sm:p-5 transition-all ${
                     delivery === "Home pickup and return"
                       ? "border-indigo-600 bg-indigo-50/40 ring-2 ring-indigo-200"
                       : "border-slate-200 bg-white hover:border-slate-300"
@@ -710,7 +664,7 @@ function BooksContent() {
               </div>
 
               {delivery === "Home pickup and return" && (
-                <div className="mt-5 space-y-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+                <div className="mt-5 space-y-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
                   <div>
                     <button
                       type="button"
@@ -759,11 +713,11 @@ function BooksContent() {
             </section>
 
             {/* 3. Schedule & Contact */}
-            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <section className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-8 shadow-xs">
               <h2 className="text-xl font-bold text-slate-900 border-b border-slate-100 pb-4">
                 3. Schedule & Contact
               </h2>
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
                     Required-by Date <span className="text-slate-400 lowercase font-normal">(min. 3 days)</span>
@@ -823,14 +777,14 @@ function BooksContent() {
             </section>
 
             {/* 4. Payment Preference */}
-            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <section className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-8 shadow-xs">
               <h2 className="text-xl font-bold text-slate-900 border-b border-slate-100 pb-4">
                 4. Payment Method & Preference
               </h2>
 
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 <label
-                  className={`cursor-pointer rounded-xl border p-4 transition ${
+                  className={`cursor-pointer rounded-2xl border p-4 sm:p-5 transition ${
                     payment === "Pay advance"
                       ? "border-indigo-600 bg-indigo-50/40 ring-2 ring-indigo-200"
                       : "border-slate-200 bg-white"
@@ -852,7 +806,7 @@ function BooksContent() {
                 </label>
 
                 <label
-                  className={`cursor-pointer rounded-xl border p-4 transition ${
+                  className={`cursor-pointer rounded-2xl border p-4 sm:p-5 transition ${
                     payment === "Pay full amount"
                       ? "border-indigo-600 bg-indigo-50/40 ring-2 ring-indigo-200"
                       : "border-slate-200 bg-white"
@@ -874,7 +828,7 @@ function BooksContent() {
                 </label>
               </div>
 
-              <div className="mt-4">
+              <div className="mt-5">
                 <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
                   Select Payment Mode
                 </p>
@@ -882,7 +836,7 @@ function BooksContent() {
                   <button
                     type="button"
                     onClick={() => setPaymentMethod("UPI")}
-                    className={`flex items-center justify-center gap-2 rounded-xl border p-3 font-bold text-sm transition ${
+                    className={`flex items-center justify-center gap-2 rounded-xl border p-3 font-bold text-sm transition cursor-pointer ${
                       paymentMethod === "UPI"
                         ? "border-indigo-600 bg-indigo-50/50 text-indigo-700 ring-2 ring-indigo-200"
                         : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
@@ -894,7 +848,7 @@ function BooksContent() {
                   <button
                     type="button"
                     onClick={() => setPaymentMethod("Cash")}
-                    className={`flex items-center justify-center gap-2 rounded-xl border p-3 font-bold text-sm transition ${
+                    className={`flex items-center justify-center gap-2 rounded-xl border p-3 font-bold text-sm transition cursor-pointer ${
                       paymentMethod === "Cash"
                         ? "border-indigo-600 bg-indigo-50/50 text-indigo-700 ring-2 ring-indigo-200"
                         : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
@@ -915,7 +869,7 @@ function BooksContent() {
                 !!orderConfirmedNumber ||
                 (delivery === "Home pickup and return" && isDistanceOutOfRange)
               }
-              className="w-full rounded-xl bg-indigo-600 px-6 py-4 text-base font-bold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300 transition"
+              className="w-full rounded-2xl bg-indigo-600 px-6 py-4 text-base font-bold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300 transition cursor-pointer"
             >
               {submitting
                 ? "Processing Order, Please Wait..."
@@ -926,7 +880,7 @@ function BooksContent() {
           </form>
 
           {/* Sticky Order Summary Sidebar */}
-          <aside className="h-fit rounded-2xl bg-slate-900 p-6 text-white lg:sticky lg:top-6 shadow-md">
+          <aside className="h-fit rounded-3xl bg-slate-900 p-6 sm:p-7 text-white lg:sticky lg:top-6 shadow-md">
             <h2 className="text-lg font-bold border-b border-slate-800 pb-3">Order Summary</h2>
             <div className="mt-4 space-y-2 text-sm text-slate-300">
               <p className="font-semibold text-white">
@@ -985,7 +939,7 @@ function BooksContent() {
               </div>
             </div>
 
-            <div className="mt-5 rounded-xl bg-slate-800/90 p-4 border border-slate-700/60">
+            <div className="mt-5 rounded-2xl bg-slate-800/90 p-4 border border-slate-700/60">
               <p className="text-xs uppercase tracking-wider font-semibold text-slate-400">Amount Due Now</p>
               <p className="mt-1 text-2xl font-black font-mono text-white">₹{paymentDue}</p>
               <p className="mt-1 text-[11px] text-slate-400">

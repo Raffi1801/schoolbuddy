@@ -3,6 +3,7 @@ import { database } from "@/database";
 
 export const dynamic = "force-dynamic";
 
+// 1. Fetch only schools present in the database
 export async function GET() {
   try {
     const schools = await database`
@@ -10,31 +11,26 @@ export async function GET() {
       FROM schools
       ORDER BY id ASC
     `;
-    return NextResponse.json({ schools });
+    return NextResponse.json({ schools: schools || [] });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
 
-// Add a new school
+// 2. Add a new school with whatever subjects admin specifies (empty by default)
 export async function POST(req: NextRequest) {
   try {
     const { name, location, subjects } = await req.json();
-    if (!name) {
+    if (!name?.trim()) {
       return NextResponse.json({ error: "School name is required" }, { status: 400 });
     }
 
-    const defaultSubjects = subjects && subjects.length > 0 
-      ? JSON.stringify(subjects) 
-      : JSON.stringify([
-          "Telugu Books", "Hindi Books", "English Books", 
-          "Mathematics Books", "Science Books", "SocialStudies Books", "NoteBooks (CW, HW, and others)"
-        ]);
+    const subjectsArray = Array.isArray(subjects) ? subjects : [];
 
     const result = await database`
       INSERT INTO schools (name, location, subjects)
-      VALUES (${name.trim()}, ${location || "Tuni"}, ${defaultSubjects})
-      RETURNING *
+      VALUES (${name.trim()}, ${location || "Tuni"}, ${JSON.stringify(subjectsArray)})
+      RETURNING id, name, location, subjects
     `;
     return NextResponse.json({ success: true, school: result[0] });
   } catch (err: any) {
@@ -42,7 +38,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// Update subjects or school details
+// 3. Update subjects list whenever admin adds or deletes a subject
 export async function PATCH(req: NextRequest) {
   try {
     const { id, subjects } = await req.json();
@@ -54,7 +50,7 @@ export async function PATCH(req: NextRequest) {
       UPDATE schools
       SET subjects = ${JSON.stringify(subjects)}
       WHERE id = ${id}
-      RETURNING *
+      RETURNING id, name, location, subjects
     `;
     return NextResponse.json({ success: true, school: updated[0] });
   } catch (err: any) {
@@ -62,7 +58,7 @@ export async function PATCH(req: NextRequest) {
   }
 }
 
-// Delete an entire school
+// 4. Delete a school completely
 export async function DELETE(req: NextRequest) {
   try {
     const { id } = await req.json();
