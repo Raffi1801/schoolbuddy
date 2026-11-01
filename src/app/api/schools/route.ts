@@ -1,74 +1,78 @@
 import { NextRequest, NextResponse } from "next/server";
+import { database } from "@/database";
 
 export const dynamic = "force-dynamic";
 
-export interface SchoolItem {
-  id: string;
-  name: string;
-  area: string;
-  subjects?: string[];
-}
-
-const defaultSubjects = [
-  "Telugu Books",
-  "Hindi Books",
-  "English Books",
-  "Mathematics Books",
-  "Science Books",
-  "SocialStudies Books",
-  "NoteBooks (CW, HW, and others)",
-];
-
-let inMemorySchools: SchoolItem[] = [
-  { id: "sri-prakash", name: "Sri Prakash Vidya Niketan", area: "Tuni", subjects: defaultSubjects },
-  { id: "loyola", name: "Loyola English Medium School", area: "Tuni", subjects: defaultSubjects },
-  { id: "st-ann", name: "St. Ann's High School", area: "Tuni", subjects: defaultSubjects },
-];
-
 export async function GET() {
-  return NextResponse.json({ schools: inMemorySchools });
-}
-
-export async function POST(req: NextRequest) {
   try {
-    const body = await req.json().catch(() => ({}));
-    const { name, area, subjects } = body;
-
-    if (!name?.trim()) {
-      return NextResponse.json({ error: "School name is required" }, { status: 400 });
-    }
-
-    const id = name.trim().toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-");
-
-    let parsedSubjects: string[] = defaultSubjects;
-    if (Array.isArray(subjects) && subjects.length > 0) {
-      parsedSubjects = subjects;
-    } else if (typeof subjects === "string" && subjects.trim()) {
-      parsedSubjects = subjects.split(",").map((s) => s.trim()).filter(Boolean);
-    }
-
-    const newSchool: SchoolItem = {
-      id,
-      name: name.trim(),
-      area: area?.trim() || "Tuni",
-      subjects: parsedSubjects,
-    };
-
-    inMemorySchools = [newSchool, ...inMemorySchools.filter((s) => s.id !== id)];
-    return NextResponse.json({ success: true, school: newSchool });
+    const schools = await database`
+      SELECT id, name, location, subjects
+      FROM schools
+      ORDER BY id ASC
+    `;
+    return NextResponse.json({ schools });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || "Failed to add school" }, { status: 500 });
+    return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
 
+// Add a new school
+export async function POST(req: NextRequest) {
+  try {
+    const { name, location, subjects } = await req.json();
+    if (!name) {
+      return NextResponse.json({ error: "School name is required" }, { status: 400 });
+    }
+
+    const defaultSubjects = subjects && subjects.length > 0 
+      ? JSON.stringify(subjects) 
+      : JSON.stringify([
+          "Telugu Books", "Hindi Books", "English Books", 
+          "Mathematics Books", "Science Books", "SocialStudies Books", "NoteBooks (CW, HW, and others)"
+        ]);
+
+    const result = await database`
+      INSERT INTO schools (name, location, subjects)
+      VALUES (${name.trim()}, ${location || "Tuni"}, ${defaultSubjects})
+      RETURNING *
+    `;
+    return NextResponse.json({ success: true, school: result[0] });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
+}
+
+// Update subjects or school details
+export async function PATCH(req: NextRequest) {
+  try {
+    const { id, subjects } = await req.json();
+    if (!id || !Array.isArray(subjects)) {
+      return NextResponse.json({ error: "Invalid parameters" }, { status: 400 });
+    }
+
+    const updated = await database`
+      UPDATE schools
+      SET subjects = ${JSON.stringify(subjects)}
+      WHERE id = ${id}
+      RETURNING *
+    `;
+    return NextResponse.json({ success: true, school: updated[0] });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
+}
+
+// Delete an entire school
 export async function DELETE(req: NextRequest) {
   try {
-    const { id } = await req.json().catch(() => ({}));
-    if (!id) return NextResponse.json({ error: "School ID is required" }, { status: 400 });
+    const { id } = await req.json();
+    if (!id) {
+      return NextResponse.json({ error: "School id required" }, { status: 400 });
+    }
 
-    inMemorySchools = inMemorySchools.filter((s) => s.id !== id);
+    await database`DELETE FROM schools WHERE id = ${id}`;
     return NextResponse.json({ success: true });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || "Failed to delete school" }, { status: 500 });
+    return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
