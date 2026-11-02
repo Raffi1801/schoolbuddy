@@ -9,6 +9,33 @@ function normalizePhone(rawPhone: string): string {
   return digits.length > 10 ? digits.slice(-10) : digits;
 }
 
+// 1. GET Handler (Allows direct testing from browser address bar)
+export async function GET() {
+  try {
+    const users = await database`
+      SELECT id, name, phone, role, created_at 
+      FROM users 
+      ORDER BY id DESC 
+      LIMIT 10;
+    `;
+    return NextResponse.json({
+      status: "connected",
+      totalFetched: users.length,
+      users,
+    });
+  } catch (err: any) {
+    console.error("GET /api/auth probe failed:", err);
+    return NextResponse.json(
+      {
+        status: "error",
+        message: err?.message || String(err),
+      },
+      { status: 500 }
+    );
+  }
+}
+
+// 2. POST Handler (Login & Auto-registration)
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -16,6 +43,19 @@ export async function POST(req: NextRequest) {
 
     const cleanedPhone = normalizePhone(phone);
     const userSecret = (pin || password || "").toString().trim();
+
+    if (action === "send_otp") {
+      if (!cleanedPhone || cleanedPhone.length !== 10) {
+        return NextResponse.json(
+          { error: "A valid 10-digit mobile number is required." },
+          { status: 400 }
+        );
+      }
+      return NextResponse.json(
+        { success: true, message: "OTP sent successfully", debugOtp: "1234" },
+        { status: 200 }
+      );
+    }
 
     if (!cleanedPhone || cleanedPhone.length !== 10) {
       return NextResponse.json(
@@ -31,7 +71,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Check existing user
+    // Check existing user
     const existing = await database`
       SELECT id, name, phone, role,
              COALESCE(pin, password, pin_hash) AS stored_secret
@@ -40,7 +80,7 @@ export async function POST(req: NextRequest) {
       LIMIT 1;
     `;
 
-    if (existing && existing.length > 0) {
+    if (existing.length > 0) {
       const user = existing[0];
       if (user.stored_secret && user.stored_secret !== userSecret) {
         return NextResponse.json(
@@ -60,23 +100,13 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 2. Perform fresh insertion with all field backups
+    // Insert new user into Neon SQL
     const displayName = (name || "Customer").trim();
-
     const inserted = await database`
       INSERT INTO users (name, phone, pin, password, pin_hash, role)
-      VALUES (
-        ${displayName},
-        ${cleanedPhone},
-        ${userSecret},
-        ${userSecret},
-        ${userSecret},
-        ${role}
-      )
-      RETURNING *;
+      VALUES (${displayName}, ${cleanedPhone}, ${userSecret}, ${userSecret}, ${userSecret}, ${role})
+      RETURNING id, name, phone, role;
     `;
-
-    console.log("INSERTION SUCCESSFUL. NEW ROW:", JSON.stringify(inserted));
 
     return NextResponse.json({
       success: true,
@@ -84,26 +114,10 @@ export async function POST(req: NextRequest) {
       user: inserted[0],
     });
   } catch (err: any) {
-    console.error("NEON SQL INSERTION ERROR:", err);
+    console.error("CRITICAL AUTH INSERT ERROR:", err);
     return NextResponse.json(
-      { error: err?.message || "Database write failed" },
+      { error: err?.message || "Internal database insertion error" },
       { status: 500 }
     );
-  }
-}
-// Add at the bottom of src/app/api/auth/route.ts
-export async function GET() {
-  try {
-    const testUsers = await database`SELECT id, name, phone, role, created_at FROM users ORDER BY id DESC LIMIT 5;`;
-    return NextResponse.json({
-      status: "connected",
-      userCount: testUsers.length,
-      users: testUsers,
-    });
-  } catch (err: any) {
-    return NextResponse.json({
-      status: "error",
-      message: err?.message || String(err),
-    }, { status: 500 });
   }
 }
