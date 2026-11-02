@@ -8,47 +8,7 @@ function normalizePhone(rawPhone: string): string {
   const digits = rawPhone.toString().replace(/\D/g, "");
   return digits.length > 10 ? digits.slice(-10) : digits;
 }
-
-// 1. GET Diagnostic Probe
-export async function GET() {
-  try {
-    const dbInfo = await database`SELECT current_database(), current_user, version();`;
-
-    const columns = await database`
-      SELECT column_name, data_type, is_nullable
-      FROM information_schema.columns 
-      WHERE table_name = 'users';
-    `;
-
-    const users = await database`
-      SELECT * FROM users ORDER BY 1 DESC LIMIT 10;
-    `;
-
-    return NextResponse.json({
-      status: "connected",
-      database: dbInfo[0]?.current_database,
-      user: dbInfo[0]?.current_user,
-      postgresVersion: dbInfo[0]?.version,
-      tableExists: columns.length > 0,
-      detectedColumns: columns.map((c: any) => c.column_name),
-      userCount: users.length,
-      users,
-    });
-  } catch (err: any) {
-    console.error("GET /api/auth diagnostic error:", err);
-    return NextResponse.json(
-      {
-        status: "database_error",
-        message: err?.message || String(err),
-        hint: err?.hint || null,
-        detail: err?.detail || null,
-        code: err?.code || null,
-      },
-      { status: 500 }
-    );
-  }
-}
-
+    
 // 2. POST Handler (Login & Auto-registration Upsert)
 export async function POST(req: NextRequest) {
   try {
