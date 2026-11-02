@@ -91,3 +91,19 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+// Add at the bottom of src/app/api/auth/route.ts
+export async function GET() {
+  try {
+    const testUsers = await database`SELECT id, name, phone, role, created_at FROM users ORDER BY id DESC LIMIT 5;`;
+    return NextResponse.json({
+      status: "connected",
+      userCount: testUsers.length,
+      users: testUsers,
+    });
+  } catch (err: any) {
+    return NextResponse.json({
+      status: "error",
+      message: err?.message || String(err),
+    }, { status: 500 });
+  }
+}
