@@ -9,7 +9,7 @@ function normalizePhone(rawPhone: string): string {
   return digits.length > 10 ? digits.slice(-10) : digits;
 }
 
-// 1. GET Handler (Allows direct testing from browser address bar)
+// 1. GET Diagnostic Probe
 export async function GET() {
   try {
     const users = await database`
@@ -118,6 +118,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: err?.message || "Internal database insertion error" },
       { status: 500 }
-    );      
+    );
   }
 }
+
