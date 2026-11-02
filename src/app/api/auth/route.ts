@@ -1,33 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
-import { database } from "@/database";
+import { database } from "../../lib/database";
 
 export const dynamic = "force-dynamic";
 
 function normalizePhone(rawPhone: string): string {
   if (!rawPhone) return "";
-  const digits = rawPhone.replace(/\D/g, "");
+  const digits = rawPhone.toString().replace(/\D/g, "");
   return digits.length > 10 ? digits.slice(-10) : digits;
 }
 
-// 1. GET Diagnostic Probe (Inspects active database & schema safely)
+// 1. GET Diagnostic Probe
 export async function GET() {
   try {
-    // Check connection info
-    const dbInfo = await database`SELECT current_database(), current_user;`;
+    const dbInfo = await database`SELECT current_database(), current_user, version();`;
 
-    // Retrieve the exact columns present in the users table
     const columns = await database`
-      SELECT column_name, data_type 
+      SELECT column_name, data_type, is_nullable
       FROM information_schema.columns 
       WHERE table_name = 'users';
     `;
 
-    // Query rows without hardcoding column names like created_at
-    const users = await database`SELECT * FROM users ORDER BY 1 DESC LIMIT 10;`;
+    const users = await database`
+      SELECT * FROM users ORDER BY 1 DESC LIMIT 10;
+    `;
 
     return NextResponse.json({
       status: "connected",
-      database: dbInfo[0],
+      database: dbInfo[0]?.current_database,
+      user: dbInfo[0]?.current_user,
+      postgresVersion: dbInfo[0]?.version,
+      tableExists: columns.length > 0,
       detectedColumns: columns.map((c: any) => c.column_name),
       userCount: users.length,
       users,
@@ -40,6 +42,7 @@ export async function GET() {
         message: err?.message || String(err),
         hint: err?.hint || null,
         detail: err?.detail || null,
+        code: err?.code || null,
       },
       { status: 500 }
     );
@@ -53,8 +56,9 @@ export async function POST(req: NextRequest) {
     const { action, name, phone, pin, password, role = "user" } = body;
 
     const cleanedPhone = normalizePhone(phone);
-    const userSecret = (pin || password || "").toString().trim();
+    const userSecret = (pin ?? password ?? "").toString().trim();
 
+    // OTP Handshake Route
     if (action === "send_otp") {
       if (!cleanedPhone || cleanedPhone.length !== 10) {
         return NextResponse.json(
@@ -68,6 +72,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Validation
     if (!cleanedPhone || cleanedPhone.length !== 10) {
       return NextResponse.json(
         { error: "A valid 10-digit mobile number is required." },
@@ -109,23 +114,60 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 2. Insert new user into Neon SQL
-    const displayName = (name || "Customer").trim();
-    const inserted = await database`
-      INSERT INTO users (name, phone, pin, password, pin_hash, role)
-      VALUES (${displayName}, ${cleanedPhone}, ${userSecret}, ${userSecret}, ${userSecret}, ${role})
-      RETURNING *;
+    // 2. Insert new user dynamically based on columns that exist
+    const displayName = (name || "Customer").toString().trim();
+
+    const columnRows = await database`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'users';
     `;
+    const colSet = new Set(columnRows.map((c: any) => c.column_name.toLowerCase()));
+
+    // Fallback safe queries depending on available columns
+    let insertedUser: any = null;
+
+    if (colSet.has("pin") && colSet.has("password") && colSet.has("pin_hash") && colSet.has("role")) {
+      const res = await database`
+        INSERT INTO users (name, phone, pin, password, pin_hash, role)
+        VALUES (${displayName}, ${cleanedPhone}, ${userSecret}, ${userSecret}, ${userSecret}, ${role})
+        RETURNING *;
+      `;
+      insertedUser = res[0];
+    } else if (colSet.has("pin") && colSet.has("role")) {
+      const res = await database`
+        INSERT INTO users (name, phone, pin, role)
+        VALUES (${displayName}, ${cleanedPhone}, ${userSecret}, ${role})
+        RETURNING *;
+      `;
+      insertedUser = res[0];
+    } else {
+      const res = await database`
+        INSERT INTO users (name, phone, pin)
+        VALUES (${displayName}, ${cleanedPhone}, ${userSecret})
+        RETURNING *;
+      `;
+      insertedUser = res[0];
+    }
 
     return NextResponse.json({
       success: true,
       isNewUser: true,
-      user: inserted[0],
+      user: {
+        id: insertedUser.id,
+        phone: insertedUser.phone,
+        name: insertedUser.name,
+        role: insertedUser.role || "user",
+      },
     });
   } catch (err: any) {
-    console.error("CRITICAL AUTH INSERT ERROR:", err);
+    console.error("CRITICAL AUTH ROUTE ERROR:", err);
     return NextResponse.json(
-      { error: err?.message || "Internal database insertion error" },
+      {
+        error: err?.message || "Internal database insertion error",
+        code: err?.code || null,
+        detail: err?.detail || null,
+      },
       { status: 500 }
     );
   }
