@@ -17,21 +17,6 @@ export async function POST(req: NextRequest) {
     const cleanedPhone = normalizePhone(phone);
     const userSecret = (pin || password || "").toString().trim();
 
-    // 1. Send OTP
-    if (action === "send_otp") {
-      if (!cleanedPhone || cleanedPhone.length !== 10) {
-        return NextResponse.json(
-          { error: "A valid 10-digit mobile number is required." },
-          { status: 400 }
-        );
-      }
-      return NextResponse.json(
-        { success: true, message: "OTP sent successfully", debugOtp: "1234" },
-        { status: 200 }
-      );
-    }
-
-    // Validation
     if (!cleanedPhone || cleanedPhone.length !== 10) {
       return NextResponse.json(
         { error: "A valid 10-digit mobile number is required." },
@@ -46,7 +31,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Check if user already exists
+    // 1. Check existing user
     const existing = await database`
       SELECT id, name, phone, role,
              COALESCE(pin, password, pin_hash) AS stored_secret
@@ -55,7 +40,7 @@ export async function POST(req: NextRequest) {
       LIMIT 1;
     `;
 
-    if (existing.length > 0) {
+    if (existing && existing.length > 0) {
       const user = existing[0];
       if (user.stored_secret && user.stored_secret !== userSecret) {
         return NextResponse.json(
@@ -75,13 +60,23 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 3. New User Insertion into Neon
+    // 2. Perform fresh insertion with all field backups
     const displayName = (name || "Customer").trim();
+
     const inserted = await database`
       INSERT INTO users (name, phone, pin, password, pin_hash, role)
-      VALUES (${displayName}, ${cleanedPhone}, ${userSecret}, ${userSecret}, ${userSecret}, ${role})
-      RETURNING id, name, phone, role;
+      VALUES (
+        ${displayName},
+        ${cleanedPhone},
+        ${userSecret},
+        ${userSecret},
+        ${userSecret},
+        ${role}
+      )
+      RETURNING *;
     `;
+
+    console.log("INSERTION SUCCESSFUL. NEW ROW:", JSON.stringify(inserted));
 
     return NextResponse.json({
       success: true,
@@ -89,9 +84,9 @@ export async function POST(req: NextRequest) {
       user: inserted[0],
     });
   } catch (err: any) {
-    console.error("CRITICAL AUTH INSERT ERROR:", err);
+    console.error("NEON SQL INSERTION ERROR:", err);
     return NextResponse.json(
-      { error: err?.message || "Internal database insertion error" },
+      { error: err?.message || "Database write failed" },
       { status: 500 }
     );
   }
