@@ -9,33 +9,44 @@ function normalizePhone(rawPhone: string): string {
   return digits.length > 10 ? digits.slice(-10) : digits;
 }
 
-// 1. GET Diagnostic Probe
+// 1. GET Diagnostic Probe (Inspects active database & schema safely)
 export async function GET() {
   try {
-    const users = await database`
-      SELECT id, name, phone, role, created_at 
-      FROM users 
-      ORDER BY id DESC 
-      LIMIT 10;
+    // Check connection info
+    const dbInfo = await database`SELECT current_database(), current_user;`;
+
+    // Retrieve the exact columns present in the users table
+    const columns = await database`
+      SELECT column_name, data_type 
+      FROM information_schema.columns 
+      WHERE table_name = 'users';
     `;
+
+    // Query rows without hardcoding column names like created_at
+    const users = await database`SELECT * FROM users ORDER BY 1 DESC LIMIT 10;`;
+
     return NextResponse.json({
       status: "connected",
-      totalFetched: users.length,
+      database: dbInfo[0],
+      detectedColumns: columns.map((c: any) => c.column_name),
+      userCount: users.length,
       users,
     });
   } catch (err: any) {
-    console.error("GET /api/auth probe failed:", err);
+    console.error("GET /api/auth diagnostic error:", err);
     return NextResponse.json(
       {
-        status: "error",
+        status: "database_error",
         message: err?.message || String(err),
+        hint: err?.hint || null,
+        detail: err?.detail || null,
       },
       { status: 500 }
     );
   }
 }
 
-// 2. POST Handler (Login & Auto-registration)
+// 2. POST Handler (Login & Auto-registration Upsert)
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -71,18 +82,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Check existing user
+    // 1. Check existing user
     const existing = await database`
-      SELECT id, name, phone, role,
-             COALESCE(pin, password, pin_hash) AS stored_secret
-      FROM users 
-      WHERE phone = ${cleanedPhone} 
-      LIMIT 1;
+      SELECT * FROM users WHERE phone = ${cleanedPhone} LIMIT 1;
     `;
 
     if (existing.length > 0) {
       const user = existing[0];
-      if (user.stored_secret && user.stored_secret !== userSecret) {
+      const storedSecret = user.pin || user.password || user.pin_hash;
+
+      if (storedSecret && storedSecret !== userSecret) {
         return NextResponse.json(
           { error: "Incorrect PIN for this mobile number." },
           { status: 401 }
@@ -100,12 +109,12 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Insert new user into Neon SQL
+    // 2. Insert new user into Neon SQL
     const displayName = (name || "Customer").trim();
     const inserted = await database`
       INSERT INTO users (name, phone, pin, password, pin_hash, role)
       VALUES (${displayName}, ${cleanedPhone}, ${userSecret}, ${userSecret}, ${userSecret}, ${role})
-      RETURNING id, name, phone, role;
+      RETURNING *;
     `;
 
     return NextResponse.json({
@@ -121,4 +130,3 @@ export async function POST(req: NextRequest) {
     );
   }
 }
-
