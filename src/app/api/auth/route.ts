@@ -118,6 +118,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: err?.message || "Internal database insertion error" },
       { status: 500 }
-    );
+    );      
   }
 }
