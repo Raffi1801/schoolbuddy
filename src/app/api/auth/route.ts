@@ -13,7 +13,7 @@ function normalizePhone(rawPhone: string): string {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const { action, name, phone, pin, password } = body;
+    const { action, name, phone, pin, password, newPin } = body;
 
     const cleanedPhone = normalizePhone(phone);
     const userSecret = (pin ?? password ?? "").toString().trim();
@@ -65,16 +65,14 @@ export async function POST(req: NextRequest) {
       let isValid = false;
 
       if (storedHash && storedHash.startsWith("$2")) {
-        // Modern bcrypt hash verification
         isValid = await bcrypt.compare(userSecret, storedHash);
       } else if (legacyPlaintext) {
-        // Legacy plaintext verification + automatic migration to bcrypt
         isValid = legacyPlaintext === userSecret;
         if (isValid) {
           const upgradedHash = await bcrypt.hash(userSecret, 10);
           await database`
             UPDATE users
-            SET pin_hash = ${upgradedHash}, pin = NULL, password = NULL
+            SET pin_hash = ${upgradedHash}
             WHERE id = ${user.id};
           `;
         }
@@ -87,64 +85,57 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      // 3b. Handle PIN Change Request (updates password_updated_at automatically)
+      if (action === "change_pin") {
+        const cleanedNewPin = (newPin ?? "").toString().trim();
+        if (!/^\d{4,6}$/.test(cleanedNewPin)) {
+          return NextResponse.json(
+            { error: "New PIN must be 4 to 6 digits." },
+            { status: 400 }
+          );
+        }
+
+        const newHash = await bcrypt.hash(cleanedNewPin, 10);
+        const updatedRows = await database`
+          UPDATE users
+          SET pin_hash = ${newHash}
+          WHERE id = ${user.id}
+          RETURNING id, phone, name, role, created_at, password_updated_at;
+        `;
+
+        return NextResponse.json({
+          success: true,
+          message: "PIN updated successfully.",
+          user: updatedRows[0],
+        });
+      }
+
+      // Fetch fresh timestamps
+      const refreshed = await database`
+        SELECT id, phone, name, role, created_at, password_updated_at
+        FROM users WHERE id = ${user.id} LIMIT 1;
+      `;
+
       return NextResponse.json({
         success: true,
-        user: {
-          id: user.id,
-          phone: user.phone,
-          name: user.name,
-          role: user.role || "user",
-        },
+        user: refreshed[0],
       });
     }
 
-    // 4. Register New User with Hashed PIN (force role = 'user' for public signups)
+    // 4. Register New User (created_at & password_updated_at default to NOW())
     const displayName = (name || "Customer").toString().trim();
     const hashedPin = await bcrypt.hash(userSecret, 10);
-    const assignedRole = "user";
 
-    const columnRows = await database`
-      SELECT column_name 
-      FROM information_schema.columns 
-      WHERE table_name = 'users';
+    const inserted = await database`
+      INSERT INTO users (name, phone, pin_hash, role, created_at, password_updated_at)
+      VALUES (${displayName}, ${cleanedPhone}, ${hashedPin}, 'user', NOW(), NOW())
+      RETURNING id, name, phone, role, created_at, password_updated_at;
     `;
-    const colSet = new Set(columnRows.map((c: Record<string, string>) => c.column_name.toLowerCase()));
-
-    let insertedUser: Record<string, unknown> | null = null;
-
-    if (colSet.has("pin_hash") && colSet.has("role")) {
-      const res = await database`
-        INSERT INTO users (name, phone, pin_hash, role)
-        VALUES (${displayName}, ${cleanedPhone}, ${hashedPin}, ${assignedRole})
-        RETURNING id, name, phone, role;
-      `;
-      insertedUser = res[0];
-    } else if (colSet.has("pin_hash")) {
-      const res = await database`
-        INSERT INTO users (name, phone, pin_hash)
-        VALUES (${displayName}, ${cleanedPhone}, ${hashedPin})
-        RETURNING id, name, phone;
-      `;
-      insertedUser = res[0];
-    } else {
-      // Fallback if pin_hash column doesn't exist yet: store hash in pin
-      const res = await database`
-        INSERT INTO users (name, phone, pin)
-        VALUES (${displayName}, ${cleanedPhone}, ${hashedPin})
-        RETURNING id, name, phone;
-      `;
-      insertedUser = res[0];
-    }
 
     return NextResponse.json({
       success: true,
       isNewUser: true,
-      user: {
-        id: insertedUser?.id,
-        phone: insertedUser?.phone,
-        name: insertedUser?.name,
-        role: (insertedUser?.role as string) || "user",
-      },
+      user: inserted[0],
     });
   } catch (err: unknown) {
     console.error("CRITICAL AUTH ROUTE ERROR:", err);
