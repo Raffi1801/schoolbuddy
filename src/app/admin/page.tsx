@@ -207,7 +207,7 @@ export default function AdminPage() {
     }
   }, [isAdminAuth]);
 
-  // Admin Login Handler
+  // Admin Login Handler (Authenticated via /api/auth + HttpOnly Cookie)
   async function handleAdminLogin(e: React.FormEvent) {
     e.preventDefault();
     setLoginError("");
@@ -216,20 +216,26 @@ export default function AdminPage() {
     try {
       const cleaned = adminPhone.replace(/\D/g, "").slice(-10);
 
-      const ADMIN_PHONE = "9963458896";
-      const ADMIN_PIN = "Mustaffa@2026";
+      const res = await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: cleaned, pin: adminPin }),
+      });
 
-      if (cleaned === ADMIN_PHONE && adminPin === ADMIN_PIN) {
-        const adminSession = {
-          phone: cleaned,
-          name: "Shop Admin",
-          role: "admin",
-        };
-        localStorage.setItem("sb_current_user", JSON.stringify(adminSession));
-        setIsAdminAuth(true);
-      } else {
-        throw new Error("Invalid mobile number or administrator PIN.");
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Invalid mobile number or administrator PIN.");
       }
+
+      if (data.user?.role !== "admin") {
+        // Clear non-admin session cookie immediately
+        await fetch("/api/auth", { method: "DELETE" });
+        throw new Error("Access denied: This number does not have administrator privileges.");
+      }
+
+      localStorage.setItem("sb_current_user", JSON.stringify(data.user));
+      setIsAdminAuth(true);
     } catch (err: any) {
       setLoginError(err.message || "Invalid administrator credentials.");
     } finally {
@@ -237,11 +243,13 @@ export default function AdminPage() {
     }
   }
 
-  function handleAdminLogout() {
+  async function handleAdminLogout() {
+    await fetch("/api/auth", { method: "DELETE" }).catch(() => {});
     localStorage.removeItem("sb_current_user");
     setIsAdminAuth(false);
     setAdminPin("");
     setSelectedBox("overview");
+    router.refresh();
   }
 
   const pendingOrdersCount = useMemo(() => {
@@ -558,21 +566,23 @@ export default function AdminPage() {
 
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Administrator Password
+                  Administrator PIN
                 </label>
                 <input
                   type="password"
                   required
+                  maxLength={6}
+                  inputMode="numeric"
                   autoComplete="new-password"
                   value={adminPin}
-                  onChange={(e) => setAdminPin(e.target.value)}
+                  onChange={(e) => setAdminPin(e.target.value.replace(/\D/g, ""))}
                   className="mt-1.5 w-full rounded-xl border border-slate-800 bg-slate-900/90 p-3 font-mono text-sm tracking-wider text-white focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 />
               </div>
 
               <button
                 type="submit"
-                disabled={loginLoading || adminPhone.length !== 10 || !adminPin}
+                disabled={loginLoading || adminPhone.length !== 10 || adminPin.length < 4}
                 className="w-full rounded-xl bg-indigo-600 py-3.5 text-xs font-bold uppercase tracking-wider text-white shadow-md hover:bg-indigo-500 disabled:opacity-40 transition cursor-pointer"
               >
                 {loginLoading ? "Verifying..." : "Authorize Admin Session"}
