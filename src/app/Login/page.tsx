@@ -14,6 +14,7 @@ function LoginFormContent() {
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [pin, setPin] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [demoCode, setDemoCode] = useState<string | null>(null);
 
   const [error, setError] = useState("");
@@ -28,6 +29,26 @@ function LoginFormContent() {
     setDemoCode(null);
     setOtp("");
     setPin("");
+    setShowPassword(false);
+  };
+
+  // Keeps actual password in `pin` while displaying `*` characters when masked
+  const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+
+    if (showPassword) {
+      setPin(val);
+      return;
+    }
+
+    if (val.length < pin.length) {
+      // Backspace / deletion
+      setPin(pin.slice(0, val.length));
+    } else if (val.length > pin.length) {
+      // Appended character(s)
+      const added = val.slice(pin.length);
+      setPin((pin + added).slice(0, 32));
+    }
   };
 
   const handleSendOtp = async () => {
@@ -98,7 +119,7 @@ function LoginFormContent() {
       }
 
       if (mode === "forgot") {
-        setSuccess("Password / PIN updated successfully! You can now sign in.");
+        setSuccess("Password updated successfully! You can now sign in.");
         setTimeout(() => switchMode("login"), 1500);
         return;
       }
@@ -140,12 +161,12 @@ function LoginFormContent() {
           <h1 className="text-2xl font-black text-white tracking-tight">
             {mode === "login" && "Parent Sign In"}
             {mode === "signup" && "Create Parent Account"}
-            {mode === "forgot" && "Reset Security Password / PIN"}
+            {mode === "forgot" && "Reset Security Password"}
           </h1>
           <p className="text-sm text-slate-400 mt-1">
-            {mode === "login" && "Enter your 10-digit mobile number and password / PIN"}
-            {mode === "signup" && "Verify your mobile with OTP and set a password / PIN"}
-            {mode === "forgot" && "Verify mobile with OTP and set a new password / PIN"}
+            {mode === "login" && "Enter your 10-digit mobile number and password"}
+            {mode === "signup" && "Verify your mobile with OTP and set a password"}
+            {mode === "forgot" && "Verify mobile with OTP and set a new password"}
           </p>
         </div>
 
@@ -178,7 +199,7 @@ function LoginFormContent() {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} autoComplete="off" className="space-y-4">
           {mode === "signup" && (
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
@@ -209,10 +230,10 @@ function LoginFormContent() {
                   type="tel"
                   required
                   maxLength={10}
+                  autoComplete="off"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
-                  placeholder="6300702057"
-                  className="w-full rounded-r-xl border border-slate-700/80 bg-slate-900/85 p-3 font-mono text-white placeholder-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400"
+                  className="w-full rounded-r-xl border border-slate-700/80 bg-slate-900/85 p-3 font-mono text-white focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400"
                 />
               </div>
 
@@ -229,7 +250,7 @@ function LoginFormContent() {
             </div>
           </div>
 
-          {/* Verification OTP Box (for Signup and Reset PIN) */}
+          {/* Verification OTP Box (for Signup and Reset Password) */}
           {mode !== "login" && (
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
@@ -247,23 +268,35 @@ function LoginFormContent() {
             </div>
           )}
 
-          {/* Security Password / PIN Field */}
+          {/* Password Field (Displays `*` asterisks while masked) */}
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
-              {mode === "forgot"
-                ? "New Password / PIN (4–32 Chars)"
-                : "Password / Security PIN (4–32 Chars)"}
+              {mode === "forgot" ? "New Password" : "Password"}
             </label>
-            <input
-              type="password"
-              required
-              minLength={4}
-              maxLength={32}
-              value={pin}
-              onChange={(e) => setPin(e.target.value)}
-              placeholder="••••••••"
-              className="w-full rounded-xl border border-slate-700/80 bg-slate-900/85 p-3 text-white placeholder-slate-500 tracking-widest text-center font-mono text-lg focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400"
-            />
+            <div className="relative">
+              <input
+                type="text"
+                required
+                minLength={4}
+                maxLength={32}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                value={showPassword ? pin : "*".repeat(pin.length)}
+                onChange={handlePasswordChange}
+                className="w-full rounded-xl border border-slate-700/80 bg-slate-900/85 p-3 pr-14 text-white tracking-widest text-center font-mono text-lg focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400"
+              />
+              {pin.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-bold uppercase tracking-wider text-cyan-400 hover:text-cyan-300 cursor-pointer"
+                >
+                  {showPassword ? "Hide" : "Show"}
+                </button>
+              )}
+            </div>
           </div>
 
           <button
@@ -291,7 +324,7 @@ function LoginFormContent() {
                   onClick={() => switchMode("forgot")}
                   className="text-xs font-semibold text-slate-400 hover:text-cyan-400 cursor-pointer"
                 >
-                  Forgot your Password / PIN?
+                  Forgot your Password?
                 </button>
               </div>
               <div className="text-slate-400">
