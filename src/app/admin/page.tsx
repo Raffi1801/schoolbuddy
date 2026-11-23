@@ -564,18 +564,17 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              <div>
+             <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Administrator PIN
+                  Administrator Password / PIN
                 </label>
                 <input
                   type="password"
                   required
-                  maxLength={6}
-                  inputMode="numeric"
+                  maxLength={32}
                   autoComplete="new-password"
                   value={adminPin}
-                  onChange={(e) => setAdminPin(e.target.value.replace(/\D/g, ""))}
+                  onChange={(e) => setAdminPin(e.target.value)}
                   className="mt-1.5 w-full rounded-xl border border-slate-800 bg-slate-900/90 p-3 font-mono text-sm tracking-wider text-white focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 />
               </div>

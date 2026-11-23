@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
-export default function LoginPage() {
+function LoginFormContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectPath = searchParams.get("redirect");
 
   const [mode, setMode] = useState<"login" | "signup" | "forgot">("login");
   const [name, setName] = useState("");
@@ -58,7 +60,7 @@ export default function LoginPage() {
 
       if (data.debugOtp) {
         setDemoCode(data.debugOtp);
-        setOtp(data.debugOtp); // Auto-fills into OTP box for convenience
+        setOtp(data.debugOtp);
       }
       setSuccess(`Verification code generated for +91 ${cleaned}`);
     } catch (err: any) {
@@ -96,14 +98,18 @@ export default function LoginPage() {
       }
 
       if (mode === "forgot") {
-        setSuccess("PIN updated successfully! You can now sign in.");
+        setSuccess("Password / PIN updated successfully! You can now sign in.");
         setTimeout(() => switchMode("login"), 1500);
         return;
       }
 
       if (data.user) {
         localStorage.setItem("sb_auth_user", JSON.stringify(data.user));
-        if (data.user.role === "admin") {
+        localStorage.setItem("sb_current_user", JSON.stringify(data.user));
+
+        if (redirectPath && redirectPath.startsWith("/")) {
+          router.push(redirectPath);
+        } else if (data.user.role === "admin") {
           router.push("/admin");
         } else {
           router.push("/account");
@@ -117,36 +123,42 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-md bg-white rounded-3xl shadow-xl p-8 border border-slate-100">
-        
+    <div
+      className="relative min-h-screen bg-slate-950 bg-cover bg-center bg-no-repeat flex items-center justify-center p-4 text-slate-100"
+      style={{ backgroundImage: "url('/images/schoolbuddy.jpg')" }}
+    >
+      {/* Subtle dark overlay so text and inputs remain sharp */}
+      <div className="absolute inset-0 bg-slate-950/50" />
+
+      {/* Frosted-Glass Login Card */}
+      <div className="relative z-10 w-full max-w-md rounded-3xl border border-cyan-500/25 bg-slate-950/75 p-8 shadow-2xl backdrop-blur-md">
         {/* Header */}
         <div className="text-center mb-6">
-          <p className="text-xs uppercase font-extrabold tracking-wider text-indigo-600 mb-1">
+          <p className="text-xs uppercase font-extrabold tracking-wider text-cyan-400 mb-1">
             TUNI BOOK COVERING SERVICE
           </p>
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight">
+          <h1 className="text-2xl font-black text-white tracking-tight">
             {mode === "login" && "Parent Sign In"}
             {mode === "signup" && "Create Parent Account"}
-            {mode === "forgot" && "Reset Security PIN"}
+            {mode === "forgot" && "Reset Security Password / PIN"}
           </h1>
-          <p className="text-sm text-slate-500 mt-1">
-            {mode === "login" && "Enter your 10-digit mobile number and PIN"}
-            {mode === "signup" && "Verify your mobile with OTP and set a 4-digit PIN"}
-            {mode === "forgot" && "Verify mobile with OTP and set a new 4-digit PIN"}
+          <p className="text-sm text-slate-400 mt-1">
+            {mode === "login" && "Enter your 10-digit mobile number and password / PIN"}
+            {mode === "signup" && "Verify your mobile with OTP and set a password / PIN"}
+            {mode === "forgot" && "Verify mobile with OTP and set a new password / PIN"}
           </p>
         </div>
 
         {/* Demo OTP Banner at the Top */}
         {demoCode && (
-          <div className="mb-5 rounded-2xl border-2 border-dashed border-indigo-400 bg-indigo-50/80 p-4 text-center">
-            <span className="inline-block rounded-full bg-indigo-600 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-white">
+          <div className="mb-5 rounded-2xl border border-dashed border-cyan-400/50 bg-cyan-950/50 p-4 text-center">
+            <span className="inline-block rounded-full bg-cyan-500 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-slate-950">
               Demo Verification Code
             </span>
-            <div className="my-1 font-mono text-3xl font-black tracking-[0.3em] text-indigo-950">
+            <div className="my-1 font-mono text-3xl font-black tracking-[0.3em] text-cyan-300">
               {demoCode}
             </div>
-            <p className="text-xs text-indigo-700 font-medium">
+            <p className="text-xs text-cyan-200/80 font-medium">
               Use this code in the verification OTP box below.
             </p>
           </div>
@@ -154,14 +166,14 @@ export default function LoginPage() {
 
         {/* Error Alert */}
         {error && (
-          <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700">
+          <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/15 p-3 text-sm font-semibold text-rose-300">
             ⚠️ {error}
           </div>
         )}
 
         {/* Success Alert */}
         {success && !demoCode && (
-          <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-700">
+          <div className="mb-4 rounded-xl border border-emerald-500/30 bg-emerald-500/15 p-3 text-sm font-semibold text-emerald-300">
             ✓ {success}
           </div>
         )}
@@ -169,7 +181,7 @@ export default function LoginPage() {
         <form onSubmit={handleSubmit} className="space-y-4">
           {mode === "signup" && (
             <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
                 Full Name
               </label>
               <input
@@ -178,19 +190,19 @@ export default function LoginPage() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Student / Parent Name"
-                className="w-full rounded-xl border border-slate-300 p-3 text-slate-900 focus:border-indigo-600 focus:outline-none"
+                className="w-full rounded-xl border border-slate-700/80 bg-slate-900/85 p-3 text-white placeholder-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400"
               />
             </div>
           )}
 
           {/* Mobile Number Field with Send OTP Button */}
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
               Mobile Number
             </label>
             <div className="flex gap-2">
               <div className="relative flex flex-1">
-                <span className="inline-flex items-center px-4 rounded-l-xl border border-r-0 border-slate-300 bg-slate-50 text-slate-600 font-semibold text-sm">
+                <span className="inline-flex items-center px-4 rounded-l-xl border border-r-0 border-slate-700/80 bg-slate-900 text-slate-400 font-semibold text-sm">
                   +91
                 </span>
                 <input
@@ -200,7 +212,7 @@ export default function LoginPage() {
                   value={phone}
                   onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
                   placeholder="6300702057"
-                  className="w-full rounded-r-xl border border-slate-300 p-3 font-mono text-slate-900 focus:border-indigo-600 focus:outline-none"
+                  className="w-full rounded-r-xl border border-slate-700/80 bg-slate-900/85 p-3 font-mono text-white placeholder-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400"
                 />
               </div>
 
@@ -209,7 +221,7 @@ export default function LoginPage() {
                   type="button"
                   disabled={otpLoading || phone.length !== 10}
                   onClick={handleSendOtp}
-                  className="px-4 py-3 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-bold rounded-xl whitespace-nowrap transition"
+                  className="px-4 py-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 disabled:opacity-40 text-cyan-300 text-xs font-bold rounded-xl whitespace-nowrap transition cursor-pointer"
                 >
                   {otpLoading ? "Sending..." : demoCode ? "Resend" : "Send OTP"}
                 </button>
@@ -220,7 +232,7 @@ export default function LoginPage() {
           {/* Verification OTP Box (for Signup and Reset PIN) */}
           {mode !== "login" && (
             <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
                 Verification OTP
               </label>
               <input
@@ -230,31 +242,34 @@ export default function LoginPage() {
                 value={otp}
                 onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
                 placeholder="Enter 4-digit OTP"
-                className="w-full rounded-xl border border-slate-300 p-3 font-mono text-slate-900 tracking-widest text-center text-lg focus:border-indigo-600 focus:outline-none"
+                className="w-full rounded-xl border border-slate-700/80 bg-slate-900/85 p-3 font-mono text-white placeholder-slate-500 tracking-widest text-center text-lg focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400"
               />
             </div>
           )}
 
-          {/* Security PIN Field */}
+          {/* Security Password / PIN Field */}
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
-              {mode === "forgot" ? "New Security PIN (4 Digits)" : "Security PIN (4 Digits)"}
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+              {mode === "forgot"
+                ? "New Password / PIN (4–32 Chars)"
+                : "Password / Security PIN (4–32 Chars)"}
             </label>
             <input
               type="password"
               required
-              maxLength={mode === "login" && phone === "9963458896" ? 30 : 4}
+              minLength={4}
+              maxLength={32}
               value={pin}
               onChange={(e) => setPin(e.target.value)}
-              placeholder="••••"
-              className="w-full rounded-xl border border-slate-300 p-3 text-slate-900 tracking-widest text-center font-mono text-lg focus:border-indigo-600 focus:outline-none"
+              placeholder="••••••••"
+              className="w-full rounded-xl border border-slate-700/80 bg-slate-900/85 p-3 text-white placeholder-slate-500 tracking-widest text-center font-mono text-lg focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400"
             />
           </div>
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg transition duration-150 disabled:opacity-50"
+            className="w-full py-3.5 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-extrabold uppercase tracking-wider text-xs rounded-xl shadow-lg shadow-cyan-500/25 transition duration-150 disabled:opacity-50 cursor-pointer"
           >
             {loading
               ? "Processing..."
@@ -262,41 +277,41 @@ export default function LoginPage() {
               ? "Sign In"
               : mode === "signup"
               ? "Verify OTP & Create Account"
-              : "Verify OTP & Save New PIN"}
+              : "Verify OTP & Save New Password"}
           </button>
         </form>
 
         {/* Footer Navigation */}
-        <div className="mt-6 pt-5 border-t border-slate-100 text-center text-sm space-y-2">
+        <div className="mt-6 pt-5 border-t border-slate-800/80 text-center text-sm space-y-2">
           {mode === "login" ? (
             <>
               <div>
                 <button
                   type="button"
                   onClick={() => switchMode("forgot")}
-                  className="text-xs font-semibold text-slate-500 hover:text-indigo-600"
+                  className="text-xs font-semibold text-slate-400 hover:text-cyan-400 cursor-pointer"
                 >
-                  Forgot your PIN?
+                  Forgot your Password / PIN?
                 </button>
               </div>
-              <div className="text-slate-600">
-                Don't have an account?{" "}
+              <div className="text-slate-400">
+                Don&apos;t have an account?{" "}
                 <button
                   type="button"
                   onClick={() => switchMode("signup")}
-                  className="font-bold text-indigo-600 hover:underline"
+                  className="font-bold text-cyan-400 hover:underline cursor-pointer"
                 >
                   Register here
                 </button>
               </div>
             </>
           ) : (
-            <div className="text-slate-600">
+            <div className="text-slate-400">
               Already registered?{" "}
               <button
                 type="button"
                 onClick={() => switchMode("login")}
-                className="font-bold text-indigo-600 hover:underline"
+                className="font-bold text-cyan-400 hover:underline cursor-pointer"
               >
                 Sign in
               </button>
@@ -304,13 +319,26 @@ export default function LoginPage() {
           )}
 
           <div className="pt-2">
-            <Link href="/" className="text-xs text-slate-400 hover:text-slate-700">
+            <Link href="/" className="text-xs text-slate-500 hover:text-cyan-300">
               ← Back to Shop Home
             </Link>
           </div>
         </div>
-
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-slate-950 flex items-center justify-center text-sm font-bold text-slate-400">
+          Loading sign-in portal...
+        </div>
+      }
+    >
+      <LoginFormContent />
+    </Suspense>
   );
 }

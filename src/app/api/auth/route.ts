@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Input Validation
+    // 2. Input Validation (Letters, numbers, and special symbols allowed)
     if (!cleanedPhone || cleanedPhone.length !== 10) {
       return NextResponse.json(
         { error: "A valid 10-digit mobile number is required." },
@@ -82,15 +82,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!/^\d{4,6}$/.test(userSecret)) {
+    if (userSecret.length < 4 || userSecret.length > 32) {
       return NextResponse.json(
-        { error: "A valid 4 to 6 digit numeric PIN is required." },
+        { error: "Password / PIN must be between 4 and 32 characters." },
         { status: 400 }
       );
     }
 
     // 3. Check Existing User
-   // 3. Check Existing User
     const existing = await database`
       SELECT * FROM users WHERE phone = ${cleanedPhone} LIMIT 1;
     `;
@@ -123,16 +122,17 @@ export async function POST(req: NextRequest) {
 
       if (!isValid) {
         return NextResponse.json(
-          { error: "Incorrect PIN for this mobile number." },
+          { error: "Incorrect Password / PIN for this mobile number." },
           { status: 401 }
         );
       }
-      // 3b. Handle PIN Change Request
+
+      // 3b. Handle Password / PIN Change Request
       if (action === "change_pin") {
         const cleanedNewPin = (newPin ?? "").toString().trim();
-        if (!/^\d{4,6}$/.test(cleanedNewPin)) {
+        if (cleanedNewPin.length < 4 || cleanedNewPin.length > 32) {
           return NextResponse.json(
-            { error: "New PIN must be 4 to 6 digits." },
+            { error: "New Password / PIN must be between 4 and 32 characters." },
             { status: 400 }
           );
         }
@@ -147,7 +147,7 @@ export async function POST(req: NextRequest) {
 
         return buildAuthResponse(
           updatedRows[0] as { id: number; phone: string; name: string; role: string },
-          { message: "PIN updated successfully." }
+          { message: "Password / PIN updated successfully." }
         );
       }
 
