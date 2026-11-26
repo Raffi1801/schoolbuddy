@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/adminGuard";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +32,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireAdmin(req);
+  if (auth.error) return auth.error;
+
   try {
     const body = await req.json().catch(() => ({}));
     const { prices, defaultDailyLimit, dateLimits, inventory } = body;

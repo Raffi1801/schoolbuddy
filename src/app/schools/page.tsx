@@ -51,13 +51,21 @@ export default function SchoolsCatalogPage() {
       {/* Header */}
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-4xl items-center justify-between px-6 py-4">
-          <Link href="/" className="flex items-center gap-2 text-2xl font-black text-slate-900">
+          <Link href="/schools" className="flex items-center gap-2 text-2xl font-black text-slate-900">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-sm text-white">📚</span>
             School <span className="text-indigo-600">Buddy</span>
           </Link>
-          <Link href="/" className="text-xs font-semibold text-slate-500 hover:text-indigo-600">
-            ← Back to Home
-          </Link>
+          <div className="flex items-center gap-4">
+            <Link href="/tracking" className="text-xs font-semibold text-slate-500 hover:text-indigo-600">
+              Track Order
+            </Link>
+            <Link
+              href="/account"
+              className="rounded-lg bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition"
+            >
+              My Account →
+            </Link>
+          </div>
         </div>
       </header>
 
@@ -96,7 +104,7 @@ export default function SchoolsCatalogPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {filteredSchools.map((school, index) => (
                 <Link
-                  key={`${school.id ?? 's'}-${index}`}
+                  key={`${school.id ?? "s"}-${index}`}
                   href={`/classes?school=${encodeURIComponent(school.name)}`}
                   className="group rounded-2xl border border-slate-200 bg-white p-5 shadow-xs hover:border-indigo-500 hover:shadow-md transition"
                 >

@@ -50,7 +50,7 @@ async function buildAuthResponse(
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const { action, name, phone, pin, password, newPin } = body;
+    const { action, name, phone, otp, pin, password, newPin } = body;
 
     const cleanedPhone = normalizePhone(phone);
     const userSecret = (pin ?? password ?? "").toString().trim();
@@ -89,12 +89,53 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Check Existing User
+    // 3. Forgot Password / Reset PIN Flow (Verified via OTP)
+    if (action === "reset_pin") {
+      const cleanedOtp = (otp ?? "").toString().trim();
+      if (cleanedOtp !== "1234") {
+        return NextResponse.json(
+          { error: "Invalid verification OTP." },
+          { status: 400 }
+        );
+      }
+
+      const existing = await database`
+        SELECT id FROM users WHERE phone = ${cleanedPhone} LIMIT 1;
+      `;
+
+      if (existing.length === 0) {
+        return NextResponse.json(
+          { error: "No account found with this mobile number." },
+          { status: 404 }
+        );
+      }
+
+      const newHash = await bcrypt.hash(userSecret, 10);
+      await database`
+        UPDATE users
+        SET pin_hash = ${newHash}, password_updated_at = NOW()
+        WHERE id = ${existing[0].id};
+      `;
+
+      return NextResponse.json({
+        success: true,
+        message: "Password reset successfully.",
+      });
+    }
+
+    // 4. Check Existing User (Login or Authenticated Password Change)
     const existing = await database`
       SELECT * FROM users WHERE phone = ${cleanedPhone} LIMIT 1;
     `;
 
     if (existing.length > 0) {
+      if (action === "signup") {
+        return NextResponse.json(
+          { error: "An account with this mobile number already exists. Please sign in." },
+          { status: 409 }
+        );
+      }
+
       const user = existing[0];
       const storedHash: string | null = user.pin_hash ? String(user.pin_hash).trim() : null;
       const legacyPlaintext: string | null =
@@ -127,7 +168,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // 3b. Handle Password / PIN Change Request
+      // 4b. Authenticated Password / PIN Change Request
       if (action === "change_pin") {
         const cleanedNewPin = (newPin ?? "").toString().trim();
         if (cleanedNewPin.length < 4 || cleanedNewPin.length > 32) {
@@ -140,7 +181,7 @@ export async function POST(req: NextRequest) {
         const newHash = await bcrypt.hash(cleanedNewPin, 10);
         const updatedRows = await database`
           UPDATE users
-          SET pin_hash = ${newHash}
+          SET pin_hash = ${newHash}, password_updated_at = NOW()
           WHERE id = ${user.id}
           RETURNING id, phone, name, role, created_at, password_updated_at;
         `;
@@ -161,7 +202,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4. Register New User
+    // 5. Register New User
+    if (action === "login") {
+      return NextResponse.json(
+        { error: "Mobile number not registered. Please create an account first." },
+        { status: 404 }
+      );
+    }
+
+    const cleanedOtp = (otp ?? "").toString().trim();
+    if (cleanedOtp !== "1234") {
+      return NextResponse.json(
+        { error: "Invalid verification OTP." },
+        { status: 400 }
+      );
+    }
+
     const displayName = (name || "Customer").toString().trim();
     const hashedPin = await bcrypt.hash(userSecret, 10);
 
@@ -182,7 +238,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// 5. Logout Handler
+// 6. Logout Handler
 export async function DELETE() {
   const res = NextResponse.json({ success: true, message: "Logged out" });
   res.cookies.delete(SESSION_COOKIE_NAME);

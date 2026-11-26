@@ -352,8 +352,8 @@ function LoginFormContent() {
           )}
 
           <div className="pt-2">
-            <Link href="/" className="text-xs text-slate-500 hover:text-cyan-300">
-              ← Back to Shop Home
+            <Link href="/schools" className="text-xs text-slate-500 hover:text-cyan-300">
+              ← Browse Schools Catalog
             </Link>
           </div>
         </div>

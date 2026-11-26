@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { database } from "@/database";
+import { requireAdmin } from "@/lib/adminGuard";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,9 @@ export async function GET() {
 
 // 2. Add a new school with whatever subjects admin specifies (empty by default)
 export async function POST(req: NextRequest) {
+  const auth = await requireAdmin(req);
+  if (auth.error) return auth.error;
+
   try {
     const { name, location, subjects } = await req.json();
     if (!name?.trim()) {
@@ -40,6 +44,9 @@ export async function POST(req: NextRequest) {
 
 // 3. Update subjects list whenever admin adds or deletes a subject
 export async function PATCH(req: NextRequest) {
+  const auth = await requireAdmin(req);
+  if (auth.error) return auth.error;
+
   try {
     const { id, subjects } = await req.json();
     if (!id || !Array.isArray(subjects)) {
@@ -60,6 +67,9 @@ export async function PATCH(req: NextRequest) {
 
 // 4. Delete a school completely
 export async function DELETE(req: NextRequest) {
+  const auth = await requireAdmin(req);
+  if (auth.error) return auth.error;
+
   try {
     const { id } = await req.json();
     if (!id) {
