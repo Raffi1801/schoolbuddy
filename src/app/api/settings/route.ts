@@ -1,71 +1,49 @@
 import { NextRequest, NextResponse } from "next/server";
+import { database } from "@/database";
 import { requireAdmin } from "@/lib/adminGuard";
 
 export const dynamic = "force-dynamic";
 
-export interface SettingsData {
-  prices: {
-    Normal: number;
-    Premium: number;
-    Special: number;
-    ratePerKm: number;
-  };
-  defaultDailyLimit: number;
-  dateLimits: Record<string, number>; // e.g. { "2026-09-27": 5, "2026-09-28": 15 }
-  inventory: Record<string, { stock: number; inStock: boolean }>;
-}
-
-let currentSettings: SettingsData = {
-  prices: {
-    Normal: 25,
-    Premium: 40,
-    Special: 60,
-    ratePerKm: 18,
-  },
-  defaultDailyLimit: 10,
-  dateLimits: {},
-  inventory: {},
-};
-
+// 1. Fetch live settings strictly from Neon PostgreSQL (no hardcoded defaults)
 export async function GET() {
-  return NextResponse.json({ settings: currentSettings });
+  try {
+    const rows = await database`
+      SELECT data
+      FROM app_settings
+      WHERE id = 1
+      LIMIT 1
+    `;
+
+    const settings = rows.length > 0 ? rows[0].data : null;
+    return NextResponse.json({ settings });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
 }
 
+// 2. Save admin-modified prices, limits, and inventory permanently to Neon
 export async function POST(req: NextRequest) {
   const auth = await requireAdmin(req);
   if (auth.error) return auth.error;
 
   try {
-    const body = await req.json().catch(() => ({}));
-    const { prices, defaultDailyLimit, dateLimits, inventory } = body;
-
-    if (prices) {
-      currentSettings.prices = {
-        ...currentSettings.prices,
-        ...prices,
-      };
+    const body = await req.json();
+    if (!body || typeof body !== "object") {
+      return NextResponse.json({ error: "Invalid settings payload" }, { status: 400 });
     }
 
-    if (typeof defaultDailyLimit === "number" && defaultDailyLimit > 0) {
-      currentSettings.defaultDailyLimit = defaultDailyLimit;
-    }
+    const updated = await database`
+      INSERT INTO app_settings (id, data, updated_at)
+      VALUES (1, ${JSON.stringify(body)}::jsonb, NOW())
+      ON CONFLICT (id)
+      DO UPDATE SET
+        data = EXCLUDED.data,
+        updated_at = NOW()
+      RETURNING data
+    `;
 
-    if (dateLimits && typeof dateLimits === "object") {
-      currentSettings.dateLimits = {
-        ...currentSettings.dateLimits,
-        ...dateLimits,
-      };
-    }
-
-    if (inventory) {
-      currentSettings.inventory = {
-        ...currentSettings.inventory,
-        ...inventory,
-      };
-    }
-
-    return NextResponse.json({ success: true, settings: currentSettings });
+    return NextResponse.json({ success: true, settings: updated[0].data });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || "Failed to update settings" }, { status: 500 });
+    return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }

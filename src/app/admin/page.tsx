@@ -54,32 +54,12 @@ const STATUS_OPTIONS = [
   "Cancelled",
 ];
 
-const COMMON_BOOK_SUGGESTIONS = [
-  "Telugu Reader",
-  "Telugu Work Book",
-  "Hindi Reader",
-  "Hindi Grammar",
-  "English Reader",
-  "English Grammar",
-  "English Work Book",
-  "Mathematics",
-  "Mathematics Work Book",
-  "General Science",
-  "Physical Science",
-  "Biological Science",
-  "Social Studies",
-  "Environmental Studies (EVS)",
-  "Computer Science",
-  "Information Technology",
-  "Drawing & Art",
-  "General Knowledge (GK)",
-  "Moral Science",
-  "Class Work NoteBook (CW)",
-  "Home Work NoteBook (HW)",
-  "Rough NoteBook",
-  "Graph Book",
-  "Practical Record Book",
-];
+const EMPTY_SETTINGS: SettingsState = {
+  prices: { Normal: 0, Premium: 0, Special: 0, ratePerKm: 0 },
+  defaultDailyLimit: 0,
+  dateLimits: {},
+  inventory: {},
+};
 
 export default function AdminPage() {
   const router = useRouter();
@@ -105,26 +85,21 @@ export default function AdminPage() {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [payingId, setPayingId] = useState<string | null>(null);
 
-  // Schools State
+  // Schools State (Strictly from Neon DB)
   const [schools, setSchools] = useState<School[]>([]);
   const [loadingSchools, setLoadingSchools] = useState(false);
   const [newSchoolName, setNewSchoolName] = useState("");
-  const [newSchoolLocation, setNewSchoolLocation] = useState("Tuni");
+  const [newSchoolLocation, setNewSchoolLocation] = useState("");
   const [newBookInputs, setNewBookInputs] = useState<{ [key: string | number]: string }>({});
 
-  // Settings & Date Limits State
-  const [settings, setSettings] = useState<SettingsState>({
-    prices: { Normal: 25, Premium: 40, Special: 60, ratePerKm: 18 },
-    defaultDailyLimit: 10,
-    dateLimits: {},
-    inventory: {},
-  });
+  // Settings & Date Limits State (Strictly from Neon DB)
+  const [settings, setSettings] = useState<SettingsState>(EMPTY_SETTINGS);
+  const [settingsConfigured, setSettingsConfigured] = useState(false);
   const [newOverrideDate, setNewOverrideDate] = useState("");
-  const [newOverrideLimit, setNewOverrideLimit] = useState(10);
+  const [newOverrideLimit, setNewOverrideLimit] = useState<number | "">("");
   const [savingSettings, setSavingSettings] = useState(false);
   const [message, setMessage] = useState("");
 
-  // Check active admin session on load
   useEffect(() => {
     try {
       const stored = localStorage.getItem("sb_current_user");
@@ -141,7 +116,7 @@ export default function AdminPage() {
   async function fetchOrders() {
     setLoadingOrders(true);
     try {
-      const res = await fetch("/api/orders");
+      const res = await fetch("/api/orders", { cache: "no-store" });
       const data = await res.json();
       const serverOrders: OrderItem[] = data.orders || (Array.isArray(data) ? data : []);
       serverOrders.sort(
@@ -158,15 +133,15 @@ export default function AdminPage() {
   async function fetchSchools() {
     setLoadingSchools(true);
     try {
-      const res = await fetch("/api/schools");
+      const res = await fetch("/api/schools", { cache: "no-store" });
       const data = await res.json();
       const serverSchools = data.schools || [];
 
       const formatted: School[] = serverSchools.map((s: any) => ({
         id: s.id,
         name: s.name,
-        location: s.location || "Tuni",
-        area: s.location || "Tuni",
+        location: s.location || "",
+        area: s.area || s.location || "",
         subjects: Array.isArray(s.subjects)
           ? s.subjects
           : typeof s.subjects === "string"
@@ -185,14 +160,25 @@ export default function AdminPage() {
 
   async function fetchSettings() {
     try {
-      const res = await fetch("/api/settings");
+      const res = await fetch("/api/settings", { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
       if (data?.settings) {
         setSettings({
-          ...data.settings,
+          prices: {
+            Normal: Number(data.settings.prices?.Normal ?? 0),
+            Premium: Number(data.settings.prices?.Premium ?? 0),
+            Special: Number(data.settings.prices?.Special ?? 0),
+            ratePerKm: Number(data.settings.prices?.ratePerKm ?? 0),
+          },
+          defaultDailyLimit: Number(data.settings.defaultDailyLimit ?? 0),
           dateLimits: data.settings.dateLimits || {},
+          inventory: data.settings.inventory || {},
         });
+        setSettingsConfigured(true);
+      } else {
+        setSettings(EMPTY_SETTINGS);
+        setSettingsConfigured(false);
       }
     } catch (err) {
       console.error("Failed to fetch settings:", err);
@@ -207,7 +193,6 @@ export default function AdminPage() {
     }
   }, [isAdminAuth]);
 
-  // Admin Login Handler (Authenticated via /api/auth + HttpOnly Cookie)
   async function handleAdminLogin(e: React.FormEvent) {
     e.preventDefault();
     setLoginError("");
@@ -229,7 +214,6 @@ export default function AdminPage() {
       }
 
       if (data.user?.role !== "admin") {
-        // Clear non-admin session cookie immediately
         await fetch("/api/auth", { method: "DELETE" });
         throw new Error("Access denied: This number does not have administrator privileges.");
       }
@@ -272,8 +256,8 @@ export default function AdminPage() {
 
     return allDateKeys.map((dateStr) => {
       const count = bookedCounts[dateStr] || 0;
-      const limit = settings.dateLimits?.[dateStr] ?? settings.defaultDailyLimit ?? 10;
-      const hasCustom = settings.dateLimits && dateStr in settings.dateLimits;
+      const limit = settings.dateLimits?.[dateStr] ?? settings.defaultDailyLimit ?? 0;
+      const hasCustom = Boolean(settings.dateLimits && dateStr in settings.dateLimits);
       return { dateStr, count, limit, hasCustom };
     });
   }, [orders, settings]);
@@ -340,15 +324,20 @@ export default function AdminPage() {
   async function saveSettingsPayload(newSettings: SettingsState) {
     setSavingSettings(true);
     try {
-      await fetch("/api/settings", {
+      const res = await fetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(newSettings),
       });
-      setMessage("✓ Updated settings and date limits successfully!");
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to save settings");
+      }
+      setSettingsConfigured(true);
+      setMessage("✓ Saved settings permanently to database!");
       setTimeout(() => setMessage(""), 3500);
-    } catch {
-      setMessage("Failed to save settings to server.");
+    } catch (err: any) {
+      setMessage(err.message || "Failed to save settings to server.");
     } finally {
       setSavingSettings(false);
     }
@@ -356,7 +345,7 @@ export default function AdminPage() {
 
   function handleAddDateLimit(e: React.FormEvent) {
     e.preventDefault();
-    if (!newOverrideDate) return;
+    if (!newOverrideDate || newOverrideLimit === "") return;
 
     const updated = {
       ...settings,
@@ -368,6 +357,7 @@ export default function AdminPage() {
     setSettings(updated);
     saveSettingsPayload(updated);
     setNewOverrideDate("");
+    setNewOverrideLimit("");
   }
 
   function handleRemoveDateLimit(dateStr: string) {
@@ -383,7 +373,7 @@ export default function AdminPage() {
     saveSettingsPayload(settings);
   }
 
-  // --- Dynamic Schools & Subjects Management (Database Only) ---
+  // --- Dynamic Schools & Books Management (100% Database Driven) ---
   async function handleAddSchool(e: React.FormEvent) {
     e.preventDefault();
     if (!newSchoolName.trim()) return;
@@ -394,7 +384,7 @@ export default function AdminPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: newSchoolName.trim(),
-          location: newSchoolLocation.trim() || "Tuni",
+          location: newSchoolLocation.trim(),
           subjects: [],
         }),
       });
@@ -404,12 +394,13 @@ export default function AdminPage() {
         const addedSchool: School = {
           id: data.school.id,
           name: data.school.name,
-          location: data.school.location || "Tuni",
-          area: data.school.location || "Tuni",
+          location: data.school.location || "",
+          area: data.school.area || data.school.location || "",
           subjects: [],
         };
         setSchools((prev) => [...prev, addedSchool]);
         setNewSchoolName("");
+        setNewSchoolLocation("");
         setMessage(`✓ Added school "${addedSchool.name}" to database.`);
         setTimeout(() => setMessage(""), 3000);
       } else {
@@ -423,7 +414,7 @@ export default function AdminPage() {
   async function handleDeleteSchool(id: string | number) {
     if (!confirm("Are you sure you want to permanently delete this school?")) return;
     try {
-      const res = await fetch("/api/schools", {
+      const res = await fetch(`/api/schools?id=${encodeURIComponent(String(id))}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id }),
@@ -514,9 +505,6 @@ export default function AdminPage() {
     );
   }
 
-  // -------------------------------------------------------------
-  // SECURITY GATEWAY: ADMIN LOGIN SCREEN
-  // -------------------------------------------------------------
   if (!isAdminAuth) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center bg-slate-900 px-6 py-12 text-slate-100">
@@ -564,7 +552,7 @@ export default function AdminPage() {
                 </div>
               </div>
 
-             <div>
+              <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
                   Administrator Password / PIN
                 </label>
@@ -602,9 +590,6 @@ export default function AdminPage() {
     );
   }
 
-  // -------------------------------------------------------------
-  // AUTHORIZED ADMIN PANEL
-  // -------------------------------------------------------------
   return (
     <main className="min-h-screen bg-slate-100 text-slate-900 pb-24">
       <header className="border-b border-slate-200 bg-white">
@@ -646,18 +631,17 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* OVERVIEW: 3 SELECTION BOXES */}
+        {/* OVERVIEW */}
         {selectedBox === "overview" && (
           <div className="space-y-4">
             <div>
               <h2 className="text-lg font-black text-slate-900">Admin Control Desk</h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Select a section to manage records.
+                Select a section to manage live database records.
               </p>
             </div>
 
             <div className="flex flex-col gap-4 max-w-xl">
-              {/* BOX 1: BOOKINGS */}
               <div
                 onClick={() => setSelectedBox("bookings")}
                 className="cursor-pointer rounded-2xl border border-slate-200 bg-white p-6 transition-all hover:border-indigo-600 hover:shadow-md hover:ring-2 hover:ring-indigo-100"
@@ -674,7 +658,6 @@ export default function AdminPage() {
                 </p>
               </div>
 
-              {/* BOX 2: SCHOOLS & SUBJECTS */}
               <div
                 onClick={() => setSelectedBox("schools")}
                 className="cursor-pointer rounded-2xl border border-slate-200 bg-white p-6 transition-all hover:border-indigo-600 hover:shadow-md hover:ring-2 hover:ring-indigo-100"
@@ -686,14 +669,13 @@ export default function AdminPage() {
                   </span>
                 </div>
                 <h3 className="mt-3 text-lg font-black text-slate-900">
-                  Manage Schools & Subjects
+                  Manage Schools & Books
                 </h3>
                 <p className="text-xs text-slate-500 mt-1">
-                  Add or delete schools and edit curriculum syllabus books shown to parents.
+                  Add or delete schools and edit syllabus books stored in Neon.
                 </p>
               </div>
 
-              {/* BOX 3: PRICES & CAPACITY */}
               <div
                 onClick={() => setSelectedBox("settings")}
                 className="cursor-pointer rounded-2xl border border-slate-200 bg-white p-6 transition-all hover:border-indigo-600 hover:shadow-md hover:ring-2 hover:ring-indigo-100"
@@ -701,14 +683,14 @@ export default function AdminPage() {
                 <div className="flex items-center justify-between">
                   <span className="text-3xl">⚙️</span>
                   <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-mono font-bold text-slate-800">
-                    Default: {settings.defaultDailyLimit || 10}/day
+                    {settingsConfigured ? `Limit: ${settings.defaultDailyLimit}/day` : "Not Configured"}
                   </span>
                 </div>
                 <h3 className="mt-3 text-lg font-black text-slate-900">
                   Prices & Daily Delivery Limit
                 </h3>
                 <p className="text-xs text-slate-500 mt-1">
-                  Adjust per-date order limits, delivery rates, and cover prices.
+                  Configure cover prices, delivery rate per km, and daily capacities.
                 </p>
               </div>
             </div>
@@ -871,7 +853,7 @@ export default function AdminPage() {
           </section>
         )}
 
-        {/* VIEW 2: SCHOOLS & SUBJECTS (STRICTLY FROM DATABASE) */}
+        {/* VIEW 2: SCHOOLS & SUBJECTS (100% DATABASE DRIVEN, ZERO HARDCODED LISTS) */}
         {selectedBox === "schools" && (
           <section className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-8 shadow-xs space-y-6">
             <div className="flex items-center justify-between border-b border-slate-100 pb-4">
@@ -884,10 +866,10 @@ export default function AdminPage() {
                   ← Back to Overview
                 </button>
                 <h3 className="text-2xl font-black text-slate-900">
-                  Schools & Syllabus Subjects
+                  Schools & Syllabus Books
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Schools catalog and configured curriculum syllabus books stored in your database.
+                  Only schools and books you add here are stored in Neon and displayed on the storefront.
                 </p>
               </div>
               <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">
@@ -895,21 +877,21 @@ export default function AdminPage() {
               </span>
             </div>
 
-            {/* Dynamic Add School Form */}
             <form onSubmit={handleAddSchool} className="flex flex-col sm:flex-row gap-2">
               <input
                 type="text"
-                placeholder="Enter new school name (e.g. Kendriya Vidyalaya)..."
+                required
+                placeholder="Enter school name..."
                 value={newSchoolName}
                 onChange={(e) => setNewSchoolName(e.target.value)}
                 className="flex-1 rounded-xl border border-slate-300 px-3.5 py-2 text-xs focus:border-indigo-600 focus:outline-none"
               />
               <input
                 type="text"
-                placeholder="Town/Area (default: Tuni)"
+                placeholder="Town / Area..."
                 value={newSchoolLocation}
                 onChange={(e) => setNewSchoolLocation(e.target.value)}
-                className="w-full sm:w-40 rounded-xl border border-slate-300 px-3.5 py-2 text-xs focus:border-indigo-600 focus:outline-none"
+                className="w-full sm:w-44 rounded-xl border border-slate-300 px-3.5 py-2 text-xs focus:border-indigo-600 focus:outline-none"
               />
               <button
                 type="submit"
@@ -926,7 +908,7 @@ export default function AdminPage() {
                 </p>
               ) : schools.length === 0 ? (
                 <p className="py-6 text-center text-xs text-slate-400">
-                  No schools found in database. Add a school using the form above.
+                  No schools in database yet. Add your first school above.
                 </p>
               ) : (
                 schools.map((s) => (
@@ -934,9 +916,9 @@ export default function AdminPage() {
                     <div className="flex items-center justify-between">
                       <div>
                         <h4 className="font-bold text-sm text-slate-900">{s.name}</h4>
-                        <p className="text-xs text-slate-400">
-                          {s.location || s.area || "Tuni"}
-                        </p>
+                        {s.location && (
+                          <p className="text-xs text-slate-400">{s.location}</p>
+                        )}
                       </div>
                       <button
                         type="button"
@@ -947,7 +929,6 @@ export default function AdminPage() {
                       </button>
                     </div>
 
-                    {/* Book / Subject Badges with Delete Button */}
                     <div className="mt-3 flex flex-wrap gap-1.5">
                       {(s.subjects || []).length === 0 ? (
                         <span className="text-xs text-slate-400 italic">
@@ -973,12 +954,10 @@ export default function AdminPage() {
                       )}
                     </div>
 
-                    {/* Add Book Input with Suggestions */}
                     <div className="mt-3 flex items-center gap-2">
                       <input
                         type="text"
-                        list={`book-suggestions-${s.id}`}
-                        placeholder="Type or select a book/subject..."
+                        placeholder="Type book or subject title..."
                         value={newBookInputs[s.id] || ""}
                         onChange={(e) =>
                           setNewBookInputs({ ...newBookInputs, [s.id]: e.target.value })
@@ -991,14 +970,6 @@ export default function AdminPage() {
                         }}
                         className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs focus:border-indigo-600 focus:outline-none w-72"
                       />
-
-                      <datalist id={`book-suggestions-${s.id}`}>
-                        {COMMON_BOOK_SUGGESTIONS.filter(
-                          (suggestion) => !(s.subjects || []).includes(suggestion)
-                        ).map((suggestion) => (
-                          <option key={suggestion} value={suggestion} />
-                        ))}
-                      </datalist>
 
                       <button
                         type="button"
@@ -1030,11 +1001,16 @@ export default function AdminPage() {
                 Prices & Daily Delivery Limit
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Set individual capacity for specific dates, default capacity for other dates, and cover prices.
+                All prices and order limits are saved directly to Neon PostgreSQL and never reset.
               </p>
             </div>
 
-            {/* Set Specific Date Limit */}
+            {!settingsConfigured && (
+              <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-xs font-semibold text-amber-900">
+                ⚠️ No pricing configuration found in Neon yet. Enter your prices and daily limit below and click Save.
+              </div>
+            )}
+
             <form
               onSubmit={handleAddDateLimit}
               className="rounded-2xl border-2 border-indigo-100 bg-indigo-50/40 p-5"
@@ -1068,7 +1044,9 @@ export default function AdminPage() {
                     min={0}
                     max={100}
                     value={newOverrideLimit}
-                    onChange={(e) => setNewOverrideLimit(Number(e.target.value))}
+                    onChange={(e) =>
+                      setNewOverrideLimit(e.target.value === "" ? "" : Number(e.target.value))
+                    }
                     className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-xs font-bold text-slate-900 focus:outline-none focus:border-indigo-600"
                     required
                   />
@@ -1085,7 +1063,6 @@ export default function AdminPage() {
               </div>
             </form>
 
-            {/* Active Dates Status List */}
             <div>
               <h4 className="text-sm font-bold text-slate-900 mb-3">
                 Scheduled Dates & Capacity ({datesSummary.length})
@@ -1136,7 +1113,7 @@ export default function AdminPage() {
                           <div
                             className={`h-full ${isFull ? "bg-red-500" : "bg-indigo-600"}`}
                             style={{
-                              width: `${Math.min(100, (count / limit) * 100)}%`,
+                              width: `${limit > 0 ? Math.min(100, (count / limit) * 100) : 100}%`,
                             }}
                           />
                         </div>
@@ -1162,7 +1139,6 @@ export default function AdminPage() {
               )}
             </div>
 
-            {/* Base Prices & Default Limit */}
             <form onSubmit={handleSaveSettings} className="border-t border-slate-100 pt-6 space-y-6">
               <h4 className="text-sm font-bold text-slate-900">
                 General Default Limit & Cover Prices
@@ -1180,11 +1156,11 @@ export default function AdminPage() {
                     type="number"
                     min={1}
                     max={100}
-                    value={settings.defaultDailyLimit || 10}
+                    value={settings.defaultDailyLimit || ""}
                     onChange={(e) =>
                       setSettings({
                         ...settings,
-                        defaultDailyLimit: Math.max(1, Number(e.target.value)),
+                        defaultDailyLimit: Math.max(0, Number(e.target.value)),
                       })
                     }
                     className="mt-3 w-full rounded-xl border border-slate-300 bg-white p-2.5 font-mono text-sm font-bold text-slate-900 focus:outline-none focus:border-indigo-600"
@@ -1200,7 +1176,7 @@ export default function AdminPage() {
                   <input
                     type="number"
                     min={1}
-                    value={settings.prices.Normal}
+                    value={settings.prices.Normal || ""}
                     onChange={(e) =>
                       setSettings({
                         ...settings,
@@ -1222,7 +1198,7 @@ export default function AdminPage() {
                   <input
                     type="number"
                     min={1}
-                    value={settings.prices.Premium}
+                    value={settings.prices.Premium || ""}
                     onChange={(e) =>
                       setSettings({
                         ...settings,
@@ -1242,7 +1218,7 @@ export default function AdminPage() {
                   <input
                     type="number"
                     min={1}
-                    value={settings.prices.Special}
+                    value={settings.prices.Special || ""}
                     onChange={(e) =>
                       setSettings({
                         ...settings,
@@ -1263,7 +1239,7 @@ export default function AdminPage() {
                   <input
                     type="number"
                     min={0}
-                    value={settings.prices.ratePerKm}
+                    value={settings.prices.ratePerKm ?? ""}
                     onChange={(e) =>
                       setSettings({
                         ...settings,

@@ -45,21 +45,19 @@ function BooksContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const school = searchParams.get("school") ?? "";
-  const className = searchParams.get("class") ?? "General Standard";
+  const className = searchParams.get("class") ?? "";
 
   const minAllowedDate = useMemo(() => getMinAllowedDate(), []);
   const isSubmittingRef = useRef(false);
 
-  // Dynamic state
+  // Strictly Database-Driven State (Zero Hardcoded Fallbacks)
   const [subjectsList, setSubjectsList] = useState<string[]>([]);
   const [loadingBooks, setLoadingBooks] = useState(true);
-  const [coverPrices, setCoverPrices] = useState<Record<string, number>>({
-    Normal: 25,
-    Premium: 40,
-    Special: 60,
-  });
-  const [ratePerKm, setRatePerKm] = useState<number>(18);
-  const [defaultDailyLimit, setDefaultDailyLimit] = useState<number>(10);
+  const [loadingSettings, setLoadingSettings] = useState(true);
+
+  const [coverPrices, setCoverPrices] = useState<Record<string, number> | null>(null);
+  const [ratePerKm, setRatePerKm] = useState<number | null>(null);
+  const [defaultDailyLimit, setDefaultDailyLimit] = useState<number | null>(null);
   const [dateLimits, setDateLimits] = useState<Record<string, number>>({});
   const [existingOrders, setExistingOrders] = useState<any[]>([]);
 
@@ -80,7 +78,7 @@ function BooksContent() {
   const [orderConfirmedNumber, setOrderConfirmedNumber] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
 
-  // 1. Fetch School-Specific Subjects from Database API
+  // 1. Fetch School-Specific Books Strictly from Database API
   useEffect(() => {
     async function loadSchoolBooks() {
       if (!school) {
@@ -91,7 +89,9 @@ function BooksContent() {
 
       setLoadingBooks(true);
       try {
-        const res = await fetch(`/api/books?school=${encodeURIComponent(school)}`);
+        const res = await fetch(`/api/books?school=${encodeURIComponent(school)}`, {
+          cache: "no-store",
+        });
         const data = await res.json();
 
         if (res.ok && Array.isArray(data.books)) {
@@ -117,38 +117,46 @@ function BooksContent() {
     loadSchoolBooks();
   }, [school]);
 
-  // 2. Fetch Pricing & Per-Date Orders Limit
+  // 2. Fetch Pricing & Per-Date Orders Limit Strictly from Database API
   useEffect(() => {
-    fetch("/api/settings")
-      .then((r) => r.json())
-      .then((data) => {
-        if (data?.settings) {
-          if (data.settings.prices) {
+    async function loadSettingsAndOrders() {
+      setLoadingSettings(true);
+      try {
+        const [settingsRes, ordersRes] = await Promise.all([
+          fetch("/api/settings", { cache: "no-store" }),
+          fetch("/api/orders", { cache: "no-store" }),
+        ]);
+
+        const settingsData = await settingsRes.json();
+        const ordersData = await ordersRes.json();
+
+        if (settingsData?.settings) {
+          const s = settingsData.settings;
+          if (s.prices) {
             setCoverPrices({
-              Normal: Number(data.settings.prices.Normal) || 25,
-              Premium: Number(data.settings.prices.Premium) || 40,
-              Special: Number(data.settings.prices.Special) || 60,
+              Normal: Number(s.prices.Normal ?? 0),
+              Premium: Number(s.prices.Premium ?? 0),
+              Special: Number(s.prices.Special ?? 0),
             });
-            if (data.settings.prices.ratePerKm) {
-              setRatePerKm(Number(data.settings.prices.ratePerKm));
-            }
+            setRatePerKm(Number(s.prices.ratePerKm ?? 0));
           }
-          if (data.settings.defaultDailyLimit) {
-            setDefaultDailyLimit(Number(data.settings.defaultDailyLimit));
+          if (s.defaultDailyLimit !== undefined && s.defaultDailyLimit !== null) {
+            setDefaultDailyLimit(Number(s.defaultDailyLimit));
           }
-          if (data.settings.dateLimits && typeof data.settings.dateLimits === "object") {
-            setDateLimits(data.settings.dateLimits);
+          if (s.dateLimits && typeof s.dateLimits === "object") {
+            setDateLimits(s.dateLimits);
           }
         }
-      })
-      .catch((err) => console.error("Error loading settings:", err));
 
-    fetch("/api/orders")
-      .then((r) => r.json())
-      .then((data) => {
-        setExistingOrders(data.orders || []);
-      })
-      .catch((err) => console.error("Error loading orders:", err));
+        setExistingOrders(ordersData.orders || []);
+      } catch (err) {
+        console.error("Error loading settings/orders:", err);
+      } finally {
+        setLoadingSettings(false);
+      }
+    }
+
+    loadSettingsAndOrders();
   }, []);
 
   // Pre-fill user data if logged in
@@ -163,6 +171,7 @@ function BooksContent() {
     } catch {}
   }, []);
 
+  const pricingReady = coverPrices !== null && ratePerKm !== null;
   const isDistanceOutOfRange = distanceMeters > MAX_DELIVERY_DISTANCE_METERS;
 
   const totalBooksCount = useMemo(() => {
@@ -170,15 +179,16 @@ function BooksContent() {
   }, [bookItems]);
 
   const bookTotal = useMemo(() => {
+    if (!coverPrices) return 0;
     return Object.values(bookItems).reduce((sum, item) => {
       if (item.count <= 0) return sum;
-      const pricePerBook = coverPrices[item.cover] ?? 25;
+      const pricePerBook = coverPrices[item.cover] ?? 0;
       return sum + item.count * pricePerBook;
     }, 0);
   }, [bookItems, coverPrices]);
 
   const deliveryCharge = useMemo(() => {
-    if (delivery !== "Home pickup and return") return 0;
+    if (delivery !== "Home pickup and return" || ratePerKm === null) return 0;
     if (distanceMeters === 0 || isDistanceOutOfRange) return 0;
     const ratePerMeter = ratePerKm / 1000;
     return Math.round(distanceMeters * ratePerMeter);
@@ -200,7 +210,7 @@ function BooksContent() {
     if (dateLimits && targetDate in dateLimits) {
       return Number(dateLimits[targetDate]);
     }
-    return defaultDailyLimit || 10;
+    return defaultDailyLimit ?? 0;
   }
 
   function handleDateChange(chosenDate: string) {
@@ -215,7 +225,7 @@ function BooksContent() {
     const currentBookings = getOrdersCountForDate(chosenDate);
     const limitForDate = getLimitForDate(chosenDate);
 
-    if (currentBookings >= limitForDate) {
+    if (limitForDate > 0 && currentBookings >= limitForDate) {
       triggerError(
         `Delivery slots are fully booked for ${chosenDate}. Please choose another date.`
       );
@@ -300,10 +310,11 @@ function BooksContent() {
 
         if (meters > MAX_DELIVERY_DISTANCE_METERS) {
           setLocationStatus(
-            `Location detected: ${readableDistance}. Pickup & return is only available within 15 km of our Tuni shop.`
+            `Location detected: ${readableDistance}. Pickup & return is only available within 15 km of our shop.`
           );
         } else {
-          const calculatedFee = Math.round(meters * (ratePerKm / 1000));
+          const activeRate = ratePerKm ?? 0;
+          const calculatedFee = Math.round(meters * (activeRate / 1000));
           setLocationStatus(
             `Location detected: ${readableDistance} from shop. Delivery charge: ₹${calculatedFee}`
           );
@@ -326,6 +337,11 @@ function BooksContent() {
     setSubmitting(true);
     setErrorMessage("");
 
+    if (!pricingReady || !coverPrices) {
+      triggerError("Storefront pricing is not configured yet. Please contact the administrator.");
+      return;
+    }
+
     if (totalBooksCount === 0) {
       triggerError("Please select at least 1 book.");
       return;
@@ -338,7 +354,7 @@ function BooksContent() {
 
     const bookingsForTarget = getOrdersCountForDate(requiredDate);
     const limitForDate = getLimitForDate(requiredDate);
-    if (bookingsForTarget >= limitForDate) {
+    if (limitForDate > 0 && bookingsForTarget >= limitForDate) {
       triggerError(
         `Delivery capacity full (${bookingsForTarget}/${limitForDate}) for ${requiredDate}. Please pick another date.`
       );
@@ -377,7 +393,7 @@ function BooksContent() {
         name,
         count: item.count,
         cover: item.cover,
-        pricePerBook: coverPrices[item.cover] ?? 25,
+        pricePerBook: coverPrices[item.cover] ?? 0,
       }));
 
     const coverSummary = Array.from(new Set(booksPayload.map((b) => b.cover))).join(", ");
@@ -456,7 +472,6 @@ function BooksContent() {
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900 pb-20">
-      {/* Header */}
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <Link href="/" className="flex items-center gap-2 text-2xl font-black text-slate-900">
@@ -476,8 +491,15 @@ function BooksContent() {
         <p className="font-semibold text-xs tracking-wider uppercase text-indigo-700">Step 3 of 3</p>
         <h1 className="mt-1 text-3xl font-extrabold text-slate-900">Configure Books & Covers</h1>
         <p className="mt-1 text-sm text-slate-600">
-          <span className="font-bold text-slate-900">{school || "School Not Selected"}</span> · {className}
+          <span className="font-bold text-slate-900">{school || "School Not Selected"}</span>
+          {className ? ` · ${className}` : ""}
         </p>
+
+        {!loadingSettings && !pricingReady && (
+          <div className="mt-6 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-semibold text-amber-900 shadow-sm">
+            ⚠️ Pricing has not been configured by the administrator yet. Please set cover prices in the Admin Panel before placing orders.
+          </div>
+        )}
 
         {errorMessage && (
           <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700 shadow-sm">
@@ -487,13 +509,13 @@ function BooksContent() {
 
         <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_380px]">
           <form onSubmit={handlePlaceOrder} autoComplete="off" className="space-y-8">
-            {/* 1. Books List Matching UI Design */}
+            {/* 1. Books List Strictly from Database */}
             <section className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-8 shadow-xs">
               <div className="flex items-center justify-between border-b border-slate-100 pb-4">
                 <div>
                   <h2 className="text-xl font-bold text-slate-900">1. Select Books & Protective Covers</h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Curriculum subjects for {school}.
+                    Curriculum subjects configured for {school || "selected school"}.
                   </p>
                 </div>
                 <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700 border border-indigo-100">
@@ -504,7 +526,7 @@ function BooksContent() {
               <div className="mt-6 space-y-3">
                 {loadingBooks ? (
                   <p className="py-8 text-center text-xs font-semibold text-slate-400">
-                    Loading curriculum books...
+                    Loading curriculum books from database...
                   </p>
                 ) : subjectsList.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-slate-200 p-8 text-center text-xs text-slate-400">
@@ -514,7 +536,6 @@ function BooksContent() {
                   subjectsList.map((book) => {
                     const item = bookItems[book] || { count: 0, cover: "Normal" };
                     const isSelected = item.count > 0;
-                    const currentPrice = coverPrices[item.cover] ?? 25;
 
                     return (
                       <div
@@ -535,7 +556,7 @@ function BooksContent() {
                             />
                             <div>
                               <p className="font-bold text-slate-900 text-sm">{book}</p>
-                              <span className="text-xs text-slate-400">Standard syllabus book</span>
+                              <span className="text-xs text-slate-400">Syllabus book</span>
                             </div>
                           </label>
 
@@ -575,7 +596,8 @@ function BooksContent() {
                                     : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                                 }`}
                               >
-                                {cType} (₹{coverPrices[cType] ?? 25})
+                                {cType}{" "}
+                                {coverPrices ? `(₹${coverPrices[cType] ?? 0})` : "(—)"}
                               </button>
                             ))}
                           </div>
@@ -612,7 +634,7 @@ function BooksContent() {
                     Shop Drop-off
                   </label>
                   <p className="mt-2 text-xs text-slate-600 leading-relaxed">
-                    Bring books directly to our shop in Tuni. Zero delivery fee (₹0).
+                    Bring books directly to our shop. Zero delivery fee (₹0).
                   </p>
 
                   <div className="mt-4 border-t border-slate-200/80 pt-3">
@@ -647,7 +669,8 @@ function BooksContent() {
                     Home Pickup & Return
                   </label>
                   <p className="mt-2 text-xs text-slate-600 leading-relaxed">
-                    Doorstep pickup & return within 15 km of our shop (₹{ratePerKm} per km).
+                    Doorstep pickup & return within 15 km of our shop{" "}
+                    {ratePerKm !== null ? `(₹${ratePerKm} per km)` : ""}.
                   </p>
 
                   {delivery === "Home pickup and return" && distanceMeters > 0 && !isDistanceOutOfRange && (
@@ -698,7 +721,7 @@ function BooksContent() {
                       placeholder={
                         isDistanceOutOfRange
                           ? "Address locked: Location exceeds 15 km limit"
-                          : "Flat/door no, street, landmark, area in Tuni"
+                          : "Flat/door no, street, landmark, area"
                       }
                       className={`mt-1 w-full rounded-xl border p-3 text-sm transition focus:outline-none ${
                         isDistanceOutOfRange
@@ -864,6 +887,7 @@ function BooksContent() {
             <button
               type="submit"
               disabled={
+                !pricingReady ||
                 totalBooksCount === 0 ||
                 submitting ||
                 !!orderConfirmedNumber ||
@@ -873,6 +897,8 @@ function BooksContent() {
             >
               {submitting
                 ? "Processing Order, Please Wait..."
+                : !pricingReady
+                ? "Awaiting Admin Price Configuration"
                 : isDistanceOutOfRange && delivery === "Home pickup and return"
                 ? "Distance Exceeds 15 km Limit"
                 : `Confirm & Place Order (${totalBooksCount} Books) · ₹${paymentDue} Due`}
@@ -891,7 +917,7 @@ function BooksContent() {
                 {Object.entries(bookItems)
                   .filter(([_, item]) => item.count > 0)
                   .map(([name, item]) => {
-                    const pricePerBook = coverPrices[item.cover] ?? 25;
+                    const pricePerBook = coverPrices?.[item.cover] ?? 0;
                     return (
                       <div key={name} className="flex justify-between py-0.5">
                         <span>
@@ -907,7 +933,7 @@ function BooksContent() {
 
               <div className="border-t border-slate-800 pt-3 text-xs">
                 <p className="text-slate-300 font-medium">{delivery}</p>
-                {delivery === "Home pickup and return" && distanceMeters > 0 && (
+                {delivery === "Home pickup and return" && distanceMeters > 0 && ratePerKm !== null && (
                   <p className="text-indigo-400">
                     {distanceMeters >= 1000 ? `${(distanceMeters / 1000).toFixed(2)} km` : `${distanceMeters} m`} (₹{ratePerKm}/km)
                   </p>
